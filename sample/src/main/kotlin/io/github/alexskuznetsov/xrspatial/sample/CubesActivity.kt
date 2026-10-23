@@ -6,10 +6,12 @@ import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.WindowManager
+import java.util.Locale
 import io.github.alexskuznetsov.xrspatial.PoseListener
 import io.github.alexskuznetsov.xrspatial.PoseSample
 import io.github.alexskuznetsov.xrspatial.SampleQuality
 import io.github.alexskuznetsov.xrspatial.SpatialError
+import io.github.alexskuznetsov.xrspatial.TrackingState
 import io.github.alexskuznetsov.xrspatial.XrSpatialSession
 
 /**
@@ -58,20 +60,43 @@ class CubesActivity : Activity() {
 
     private val listener = object : PoseListener {
         private var frames = 0L
+        private val counts = IntArray(SampleQuality.entries.size)
+        private var firstNs = 0L
+        private var usableSeen = false
+
+        override fun onStateChanged(state: TrackingState) {
+            if (state == TrackingState.STARTING) { counts.fill(0); firstNs = 0L; usableSeen = false; frames = 0L }
+        }
+
         override fun onSample(sample: PoseSample, quality: SampleQuality) {
-            // Render thread: keep it short. Show the raw position twice a second.
+            // Render thread: keep it short.
+            if (firstNs == 0L) firstNs = sample.hostReceiptNs
+            counts[quality.ordinal]++
+            if (quality == SampleQuality.USABLE && !usableSeen) {
+                usableSeen = true
+                Log.i(TAG, text("first USABLE pose after %.2f s (frame %d)", (sample.hostReceiptNs - firstNs) / 1e9, sample.frameIndex))
+            }
+            if (sample.frameIndex % 300 == 0L) {
+                Log.i(TAG, text("frame %d %s flags %d position %.3f %.3f %.3f", sample.frameIndex, quality, sample.locationFlags, sample.px, sample.py, sample.pz))
+            }
+            // Show the raw position twice a second.
             if (quality == SampleQuality.USABLE && frames++ % 30 == 0L) {
-                session.setHud(top = "XR SPATIAL CUBES", bottom = "X %.2f  Y %.2f  Z %.2f".format(sample.px, sample.py, sample.pz))
+                session.setHud(top = "XR SPATIAL CUBES", bottom = text("X %.2f  Y %.2f  Z %.2f", sample.px, sample.py, sample.pz))
             }
         }
         override fun onError(error: SpatialError) {
             Log.e(TAG, "session error: ${error.message} operation=${error.operation} result=${error.resultCode}")
         }
         override fun onStopped(reason: String) {
-            Log.i(TAG, "stopped: $reason ${session.diagnostics()}")
+            val qualities = SampleQuality.entries.joinToString(" ") { "${it.name}=${counts[it.ordinal]}" }
+            Log.i(TAG, "stopped: $reason samples: $qualities ${session.diagnostics()}")
             running = false
         }
     }
 
-    private companion object { const val TAG = "XrSpatialSample" }
+    private companion object {
+        const val TAG = "XrSpatialSample"
+        // Decimal point regardless of the device language (the HUD font has no comma).
+        fun text(format: String, vararg args: Any?) = String.format(Locale.ROOT, format, *args)
+    }
 }
