@@ -16,6 +16,13 @@ the RayNeo SDK, then runs a standard OpenXR session with its own frame loop and 
 - per-eye view and projection matrices, so you can draw world-locked content with OpenGL ES 3;
 - an optional head-locked debug text line.
 
+![World-locked cubes from the sample app, left eye, recorded on a RayNeo X3 Pro](docs/media/cubes-demo.gif)
+
+The sample app on the glasses, left eye, 14 s ([MP4](docs/media/cubes-demo.mp4)): the wearer steps
+sideways and forward; the cubes stay in place, the side face comes into view and the far cube shifts
+behind the near one. The bottom line is the raw head position in metres. Recorded from a computer with
+`adb shell screenrecord`; the glasses are see-through, so the room is not in the picture.
+
 ```kotlin
 val session = XrSpatialSession(activity, surfaceView)
 session.start(MyRenderer(), object : PoseListener {
