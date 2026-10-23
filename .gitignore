@@ -1,0 +1,10 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+.cxx/
+# RayNeo SDK binaries are never committed (see vendor/README.md).
+vendor/rayneo-sdk-*/
+*.apk
+*.aab

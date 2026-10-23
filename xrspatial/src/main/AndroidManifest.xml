@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The RayNeo OpenXR runtime package and the standard OpenXR permissions it checks. -->
+    <queries><package android:name="com.rayneo.xr.runtime" /></queries>
+    <uses-permission android:name="org.khronos.openxr.permission.OPENXR" />
+    <uses-permission android:name="org.khronos.openxr.permission.OPENXR_SYSTEM" />
+    <application>
+        <!-- Marks the app as a RayNeo glasses app (as in the RayNeo SDK samples). -->
+        <meta-data android:name="com.rayneo.mercury.app" android:value="true" />
+    </application>
+</manifest>

@@ -1,0 +1,13 @@
+rayneo-x3-spatial-sdk
+Copyright 2026 The rayneo-x3-spatial-sdk authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This is an unofficial project. It is not affiliated with, endorsed by or supported by RayNeo or TCL.
+"RayNeo" and "X3 Pro" are names of their respective owners.
+
+This product includes the Khronos OpenXR API headers (third_party/openxr), Copyright The Khronos Group
+Inc., licensed under Apache-2.0 OR MIT.
+
+This product does not include RayNeo software. Building it requires the RayNeo SDK libraries, which the
+user obtains from RayNeo under RayNeo's terms.
