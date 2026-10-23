@@ -18,6 +18,14 @@ internal data class RunResult(
         return null
     }
 
+    /**
+     * The runtime ended a healthy session while the app had lost window focus and nobody asked it to stop:
+     * a pause, not an error (observed: the runtime answers focus loss with STOPPING).
+     */
+    fun pausedByFocusLoss(focusLost: Boolean, stopRequested: Boolean): Boolean =
+        focusLost && !stopRequested && instanceStatus == "COMPLETED" && graphicsStatus == "COMPLETED" &&
+            loopStatus == "COMPLETED" && endReason in RUNTIME_ENDED
+
     companion object {
         /** End reasons where the runtime ended the session without our exit request (frame_loop.h loop()). */
         val RUNTIME_ENDED = setOf("RUNTIME_STOPPING", "SESSION_LOST_OR_EXITING")

@@ -21,6 +21,7 @@ guarantees; other firmware may differ. Each item says what this library does abo
 | A second `xrWaitFrame` before `xrEndFrame` returns `XR_ERROR_CALL_ORDER_INVALID` (−37): frames are strictly serialised. | Ends every begun frame; one frame in flight. |
 | The runtime presents inside `xrEndFrame` with `eglSwapBuffers` on the calling thread's current EGL **window** surface. With a 1×1 pbuffer nothing is visible. | Makes an EGL window surface on the app's `SurfaceView` current on the render thread. |
 | Swapchain: 640×480 per eye, `GL_SRGB8_ALPHA8`, 4 images; views report sample count 0. | Requests the recommended size (fallback 640×480) and sample count 1; adds its own 16-bit depth buffer. |
+| When the app's window loses focus (observed: the user opened the system screen-recording app), the RayNeo client reports focus 0 and the runtime moves the session to STOPPING (state 6) within ~40 ms. A recording made with the on-glasses recorder therefore cannot show a running XR session. | Ends the session cleanly, reports `TrackingState.PAUSED` (no error) and starts a new session when focus returns (observed: new session usable 0.91 s after the restart, same process). |
 | The glasses switch the display off after ~30 s without touch input, which pauses the app. | The sample sets `FLAG_KEEP_SCREEN_ON`; do the same in your Activity. |
 
 ## Poses and time

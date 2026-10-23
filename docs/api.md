@@ -20,14 +20,15 @@ class XrSpatialSession(activity: Activity, surfaceView: SurfaceView, config: Con
 | `Config(appName = "xrspatial", nearZ = 0.05f, farZ = 100f, waitingHud = true)` | `appName` goes to `xrCreateInstance`; near/far planes of `EyeFrame.projection`; `waitingHud` shows "WAITING FOR TRACKING" until the first `USABLE` pose. |
 | `start(renderer: XrRenderer, listener: PoseListener): Result<Unit>` | Sets `renderer` and starts. |
 | `start(listener: PoseListener): Result<Unit>` | Starts a session and returns at once. Must be called on the main thread, with the `SurfaceView`'s surface valid and the Activity resumed and focused. Immediate failures come back in the `Result`; later ones go to `PoseListener.onError`. |
-| `stop()` | Asks the frame loop to end; `PoseListener.onStopped` follows when everything is released. Call it from `onPause` and `surfaceDestroyed`. |
+| `stop()` | Asks the frame loop to end; `PoseListener.onStopped` follows when everything is released. Also ends a pause. Call it from `onPause` and `surfaceDestroyed`. |
 | `renderer: XrRenderer?` | Volatile; read on the render thread each frame. |
 | `latestUsable(): PoseSample?` | Last `USABLE` sample of the current session, or null. Any thread. |
 | `diagnostics(): Map<String, String>` | RayNeo SDK and runtime versions, runtime/system names, state, session epoch, last end reason. For logs only. |
-| `onWindowFocusChanged(hasFocus: Boolean)` | Forward from `Activity.onWindowFocusChanged`; the runtime tracks focus. |
+| `onWindowFocusChanged(hasFocus: Boolean)` | Forward from `Activity.onWindowFocusChanged`; the runtime tracks focus, and a paused session resumes here. |
 | `setHud(top: String = "", bottom: String = "")` | Head-locked debug text: small top line, larger bottom line. Upper-case Latin letters, digits and `. : / - < >`; anything else is a space. Long lines shrink; beyond about 100 characters they are clipped. Any thread. |
 
-One session at a time per process (several sessions in one process are untested). After `onStopped`, the
+One session at a time per process; consecutive sessions in one process work (observed once, after a
+focus loss). After `onStopped`, the
 same object can be started again.
 
 ### Lifecycle
@@ -36,10 +37,23 @@ same object can be started again.
 start() ── STARTING ── bindService (worker thread) ── RUNNING ── frame loop ── STOPPING ── STOPPED
                          │ failure                     │ stop() / runtime ends / error
                          └── onError + onStopped        └── onError (if any) + onStopped(reason)
+
+RUNNING ── window focus lost, runtime ends the session ── STOPPING ── PAUSED
+PAUSED  ── window focus back ── STARTING ── ... ── RUNNING        (new sessionEpoch, new warm-up)
+PAUSED  ── stop() ── STOPPED + onStopped("STOPPED")
 ```
 
+**Focus loss is a pause, not an error.** When another window takes focus (another app, the system screen
+recorder, a system dialog), the RayNeo runtime ends the OpenXR session. The library then releases
+everything as for a stop, reports `TrackingState.PAUSED` (no `onError`, no `onStopped`) and starts a new
+session by itself when `onWindowFocusChanged(true)` arrives. The new session has a new LOCAL space
+(`sessionEpoch` + 1, yaw and origin from the head at that moment) and its own warm-up of about one
+second, so world-locked content re-anchors to where the wearer looks when focus returns. If the restart
+fails, `onError` and `onStopped("RESUME_FAILED")` follow. If the runtime ends a session while the app
+still has focus, that is `SpatialError.SessionLost`.
+
 `onStopped(reason)`: `STOPPED`, `ERROR`, `BIND_FAILED`, `STOPPED_BEFORE_SESSION`, `SURFACE_INVALID`,
-`LOADER_FAILED`.
+`LOADER_FAILED`, `RESUME_FAILED`.
 
 ## XrRenderer and EyeFrame
 
@@ -126,6 +140,6 @@ Every error keeps the failing operation's name and the raw result code (an `XrRe
 | `LoaderInitFailed` | Window hand-over or loading the RayNeo loader failed. |
 | `RuntimeUnavailable` | Loader initialisation, instance or system creation failed. |
 | `SessionUnsupported` | Not on the main thread, invalid surface, EGL/GLES or `xrCreateSession` failed. |
-| `SessionLost` | The frame loop failed or the runtime ended the session. |
+| `SessionLost` | The frame loop failed, or the runtime ended the session while the app had window focus. |
 | `AlreadyRunning` | `start` while a session is running. |
 | `PositionTrackingUnavailable`, `PermissionDenied` | Reserved; not raised by 0.1.0. |

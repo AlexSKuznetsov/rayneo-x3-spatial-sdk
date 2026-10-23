@@ -65,6 +65,7 @@ class CubesActivity : Activity() {
         private var usableSeen = false
 
         override fun onStateChanged(state: TrackingState) {
+            Log.i(TAG, "state $state")
             if (state == TrackingState.STARTING) { counts.fill(0); firstNs = 0L; usableSeen = false; frames = 0L }
         }
 

@@ -1,6 +1,7 @@
 package io.github.alexskuznetsov.xrspatial
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,5 +36,14 @@ class RunResultTest {
         val lost = ok.copy(endReason = "SESSION_LOST_OR_EXITING").error()
         assertTrue(lost is SpatialError.SessionLost)
         assertEquals("SESSION_LOST_OR_EXITING", lost!!.operation)
+    }
+
+    @Test fun runtimeStopAfterFocusLossIsAPause() {
+        val stopped = ok.copy(endReason = "RUNTIME_STOPPING")
+        assertTrue(stopped.pausedByFocusLoss(focusLost = true, stopRequested = false))
+        assertFalse(stopped.pausedByFocusLoss(focusLost = false, stopRequested = false))  // still SessionLost
+        assertFalse(stopped.pausedByFocusLoss(focusLost = true, stopRequested = true))    // our own stop wins
+        assertFalse(ok.pausedByFocusLoss(focusLost = true, stopRequested = false))        // exit we requested
+        assertFalse(stopped.copy(loopStatus = "ERROR", loopFailure = "xrEndFrame").pausedByFocusLoss(true, false))
     }
 }

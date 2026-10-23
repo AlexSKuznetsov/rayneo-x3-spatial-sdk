@@ -35,7 +35,8 @@ Version 0.1.0, experimental. Tested on **one** RayNeo X3 Pro, OpenXR runtime `co
 | Session start, frame loop at 60 Hz, all four location flags reported | Metric scale (no measured translation test yet) |
 | World-locked cubes stay in place during 60 s of walking and looking around (observed by the wearer) | Accuracy, drift, latency figures |
 | Stable start: nothing is drawn until the start-up garbage is over | Usable timestamps (see runtime notes: XrTime is constant) |
-| Eye-height marker lines up with the wearer's real eye height | Several sessions in one process, other firmware/runtime versions |
+| Eye-height marker lines up with the wearer's real eye height | Other firmware/runtime versions |
+| A second session in the same process (after a focus loss) starts and tracks | |
 
 Known issues seen on that device: after a ~90° head turn to the left the position once jumped by ~0.4 m
 and kept a ~0.3 m offset (2 of 2 tries); one ~1 m position jump in another 30 s run; the location flags
@@ -135,6 +136,10 @@ class MyRenderer : XrRenderer {
     override fun onGlRelease() { /* delete them */ }
 }
 ```
+
+If another window takes focus (for example the system screen recorder), the runtime ends the session;
+the library pauses (`TrackingState.PAUSED`) and starts a new session when focus returns. Content then
+re-anchors to the new LOCAL space. The on-glasses screen recorder cannot record a running session.
 
 Pose only, without drawing: call `session.start(listener)` without a renderer. The library still submits
 a (black, i.e. transparent) frame every display period, as the runtime requires.

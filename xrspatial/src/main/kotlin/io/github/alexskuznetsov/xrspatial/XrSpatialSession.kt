@@ -22,6 +22,10 @@ import java.util.concurrent.Executors
  * - If a [renderer] is set, it draws each eye of every frame whose pose is [SampleQuality.USABLE].
  * - Optional head-locked text via [setHud].
  *
+ * Losing window focus (another app or the system screen recorder in front) makes the runtime end the
+ * session; the session then goes to [TrackingState.PAUSED] instead of reporting an error, and starts again
+ * by itself (new [PoseSample.sessionEpoch], new warm-up) when focus returns.
+ *
  * Threading: call [start], [stop] and [onWindowFocusChanged] on the main thread. Call [stop] from
  * `Activity.onPause`. [surfaceView] must be the Activity's visible SurfaceView with a valid surface: the
  * runtime shows frames on it. One session at a time per process.
@@ -51,6 +55,8 @@ class XrSpatialSession(
     @Volatile private var state = TrackingState.STOPPED
     @Volatile private var nativeRunning = false
     private var stopRequested = false
+    private var focusLostInRun = false
+    private var pausedListener: PoseListener? = null
     private var client: FFalconXRClient? = null
     private var bound = false
     private var epoch = 0
@@ -67,6 +73,10 @@ class XrSpatialSession(
     override fun start(listener: PoseListener): Result<Unit> {
         if (Looper.myLooper() != Looper.getMainLooper()) return Result.failure(SpatialError.SessionUnsupported("start:notMainThread"))
         if (state != TrackingState.STOPPED) return Result.failure(SpatialError.AlreadyRunning())
+        return begin(listener)
+    }
+
+    private fun begin(listener: PoseListener): Result<Unit> {
         if (!surfaceView.holder.surface.isValid) return Result.failure(SpatialError.SessionUnsupported("surfaceInvalid"))
         val sdk = runCatching { FxrApi.Get() as? FFalconXRClient }.getOrNull()
             ?: return Result.failure(SpatialError.VendorInitializationFailed("FxrApi.Get"))
@@ -74,6 +84,7 @@ class XrSpatialSession(
         if (!initialized) return Result.failure(SpatialError.VendorInitializationFailed("initAndroid"))
         client = sdk
         stopRequested = false
+        focusLostInRun = false
         latest = null
         epoch++
         setState(listener, TrackingState.STARTING)
@@ -86,6 +97,13 @@ class XrSpatialSession(
 
     override fun stop() {
         if (state == TrackingState.STOPPED) return
+        if (state == TrackingState.PAUSED) {
+            val listener = pausedListener ?: return
+            pausedListener = null
+            setState(listener, TrackingState.STOPPED)
+            listener.onStopped("STOPPED")
+            return
+        }
         stopRequested = true
         if (nativeRunning) XrSpatialNative.cancel()
     }
@@ -94,9 +112,14 @@ class XrSpatialSession(
 
     override fun diagnostics(): Map<String, String> = facts + mapOf("state" to state.name, "sessionEpoch" to epoch.toString())
 
-    /** Forward from `Activity.onWindowFocusChanged`; the RayNeo runtime tracks the window focus itself. */
+    /**
+     * Forward from `Activity.onWindowFocusChanged`: the RayNeo runtime tracks the window focus, and a paused
+     * session resumes here.
+     */
     fun onWindowFocusChanged(hasFocus: Boolean) {
+        if (!hasFocus && nativeRunning) focusLostInRun = true
         if (bound && nativeRunning) runCatching { client?.setWindowFocus(hasFocus) }
+        if (hasFocus && state == TrackingState.PAUSED) resume()
     }
 
     /**
@@ -164,7 +187,12 @@ class XrSpatialSession(
             val result = runCatching { XrSpatialNative.run(activity, activity.applicationContext, surface, config.appName, config.nearZ, config.farZ) }
             main.post {
                 nativeRunning = false
-                val error = result.fold({ parse(it).error() }, { SpatialError.SessionLost("run:${it.javaClass.simpleName}") })
+                val run = result.getOrNull()?.let { parse(it) }
+                if (run != null && run.pausedByFocusLoss(focusLostInRun, stopRequested)) {
+                    pause(sdk, listener)
+                    return@post
+                }
+                val error = run?.error() ?: result.exceptionOrNull()?.let { SpatialError.SessionLost("run:${it.javaClass.simpleName}") }
                 finish(sdk, listener, error, if (error == null) "STOPPED" else "ERROR")
             }
         }, "xrspatial-render").start()
@@ -188,15 +216,39 @@ class XrSpatialSession(
 
     private fun finish(sdk: FFalconXRClient, listener: PoseListener, error: SpatialError?, reason: String) {
         setState(listener, TrackingState.STOPPING)
+        release(sdk)
+        setState(listener, TrackingState.STOPPED)
+        if (error != null) listener.onError(error)
+        listener.onStopped(reason)
+    }
+
+    // The runtime ended the session on focus loss: release everything like a stop, but keep the listener.
+    private fun pause(sdk: FFalconXRClient, listener: PoseListener) {
+        setState(listener, TrackingState.STOPPING)
+        release(sdk)
+        pausedListener = listener
+        setState(listener, TrackingState.PAUSED)
+        if (activity.hasWindowFocus()) resume()
+    }
+
+    private fun resume() {
+        val listener = pausedListener ?: return
+        if (!surfaceView.holder.surface.isValid) return  // stays paused; the next focus gain tries again
+        pausedListener = null
+        begin(listener).onFailure { e ->
+            setState(listener, TrackingState.STOPPED)
+            listener.onError(e as? SpatialError ?: SpatialError.SessionLost("resume:${e.javaClass.simpleName}"))
+            listener.onStopped("RESUME_FAILED")
+        }
+    }
+
+    private fun release(sdk: FFalconXRClient) {
         XrSpatialNative.callbacks = null
         if (bound) runCatching { sdk.unbindService() }
         bound = false
         runCatching { sdk.uninitAndroid() }
         client = null
         latest = null
-        setState(listener, TrackingState.STOPPED)
-        if (error != null) listener.onError(error)
-        listener.onStopped(reason)
     }
 
     private fun setState(listener: PoseListener, next: TrackingState) {

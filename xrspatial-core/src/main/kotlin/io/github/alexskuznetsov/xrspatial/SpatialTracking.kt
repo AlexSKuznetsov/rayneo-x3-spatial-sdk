@@ -31,7 +31,15 @@ interface PoseListener {
     fun onStopped(reason: String) {}
 }
 
-enum class TrackingState { STARTING, RUNNING, STOPPING, STOPPED }
+enum class TrackingState {
+    STARTING, RUNNING, STOPPING, STOPPED,
+    /**
+     * The runtime ended the session because the app lost window focus (for example another app or the
+     * system screen recorder came to the front). No samples arrive; the implementation starts a new session
+     * (new [PoseSample.sessionEpoch]) when focus returns. [SpatialTracking.stop] ends the pause.
+     */
+    PAUSED,
+}
 
 /** Failures keep the failing operation's name and raw result code (e.g. an XrResult), never a guess. */
 sealed class SpatialError(message: String, val operation: String? = null, val resultCode: Int? = null) :
