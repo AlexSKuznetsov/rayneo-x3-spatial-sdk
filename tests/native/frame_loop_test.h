@@ -312,12 +312,14 @@ inline void run(const std::function<void(bool, const char*)>& expect, const std:
         pass("frame_loop_frame_views_for_world_scene");
     }
     {
-        Fake f; std::vector<std::string> lines; unsigned calls = 0; bool same = true;
-        auto s = runLoop(f, lines, 1000, {}, {}, {}, [&](uint32_t index, XrSpace local, XrTime time) {
-            same = same && index == calls && local == f.local && time == f.time;
+        Fake f; std::vector<std::string> lines; unsigned calls = 0, focused = 0; bool same = true;
+        auto s = runLoop(f, lines, 1000, {}, {}, {}, [&](uint32_t index, XrSpace local, XrTime time, XrSessionState state) {
+            same = same && index == calls && local == f.local && time == f.time && state == XrSessionState(f.state);
+            if (state == XR_SESSION_STATE_FOCUSED) ++focused;
             ++calls;
         });
-        expect(calls == s.framesBegun && same, "extra locate once per begun frame with LOCAL and the frame's display time");
+        expect(calls == s.framesBegun && same, "extra locate once per begun frame with LOCAL, the frame's display time and the session state");
+        expect(focused == calls, "the fake is FOCUSED before the first frame; the state passed is the polled one");
         pass("frame_loop_locate_extra_uses_loop_space_and_time");
     }
 }
