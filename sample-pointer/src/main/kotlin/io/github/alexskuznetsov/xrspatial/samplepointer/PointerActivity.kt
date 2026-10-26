@@ -69,11 +69,19 @@ class PointerActivity : Activity() {
     // Thresholds from the touchpad as observed on the X3 Pro: taps ~60-90 ms without movement, swipes run
     // across most of the 0..1280 range in ~100-130 ms.
     private fun gesture(dx: Float, durationMs: Long) {
-        when {
-            maxPointers >= 2 -> scene.recenter()
-            dx > SWIPE_PX -> pointer.style = if (pointer.style is PointerStyle.Dot) PointerStyle.Ray() else PointerStyle.Dot()
-            dx < -SWIPE_PX -> pointer.enabled = !pointer.enabled
-            abs(dx) < TAP_PX && durationMs < TAP_MS -> {
+        val kind = when {
+            maxPointers >= 2 -> "two-finger"
+            dx > SWIPE_PX -> "swipe-forward"
+            dx < -SWIPE_PX -> "swipe-back"
+            abs(dx) < TAP_PX && durationMs < TAP_MS -> "tap"
+            else -> "ignored"
+        }
+        Log.i(TAG, "gesture $kind dx=${dx.toInt()} ms=$durationMs pointers=$maxPointers")
+        when (kind) {
+            "two-finger" -> scene.recenter()
+            "swipe-forward" -> pointer.style = if (pointer.style is PointerStyle.Dot) PointerStyle.Ray() else PointerStyle.Dot()
+            "swipe-back" -> pointer.enabled = !pointer.enabled
+            "tap" -> {
                 val clicked = pointer.hit?.let { card.performClickAt(it) }
                 Log.i(TAG, "tap hit=${pointer.hit != null} clicked=${clicked?.id?.let { resources.getResourceEntryName(it) }}")
             }
