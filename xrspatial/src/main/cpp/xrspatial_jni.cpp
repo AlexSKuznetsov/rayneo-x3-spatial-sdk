@@ -1,5 +1,5 @@
 // JNI entry of the SDK: OpenXR instance + GLES session on the RayNeo runtime, the frame loop
-// (frame_loop.h), per-eye render callbacks into Kotlin and the head-locked HUD.
+// (frame_loop.h), per-eye render callbacks into Kotlin, the head-locked HUD and optional hand tracking.
 // The vendor OpenXR loader must already be loaded (XrSpatialSession does that through the RayNeo SDK).
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -7,6 +7,7 @@
 #include <jni.h>
 #include <openxr/openxr_platform.h>  // before frame_loop.h: GLES swapchain image type
 #include "frame_loop.h"
+#include "hand_tracking.h"
 #include "hud_text.h"
 #include "render_math.h"
 #include "xr_instance.h"
@@ -158,8 +159,9 @@ private:
 struct JavaCallbacks {
     JNIEnv* env = nullptr;
     jclass cls = nullptr;
-    jmethodID sessionCreated = nullptr, glReady = nullptr, glRelease = nullptr, sample = nullptr, drawEye = nullptr;
-    jfloatArray view = nullptr, projection = nullptr;
+    jmethodID sessionCreated = nullptr, glReady = nullptr, glRelease = nullptr, sample = nullptr, drawEye = nullptr, hands = nullptr;
+    jfloatArray view = nullptr, projection = nullptr, handPositions = nullptr;
+    jlongArray handInfo = nullptr;
     uint32_t exceptions = 0;
 
     bool resolve(JNIEnv* e, jclass c) {
@@ -170,17 +172,23 @@ struct JavaCallbacks {
         glRelease = env->GetStaticMethodID(cls, "onGlRelease", "()V");
         sample = env->GetStaticMethodID(cls, "onSample", "(JJJJFFFFFFF)V");
         drawEye = env->GetStaticMethodID(cls, "onDrawEye", "(I[F[FII)V");
-        if (!sessionCreated || !glReady || !glRelease || !sample || !drawEye) { env->ExceptionClear(); return false; }
+        hands = env->GetStaticMethodID(cls, "onHands", "(JJ[J[F)V");
+        if (!sessionCreated || !glReady || !glRelease || !sample || !drawEye || !hands) { env->ExceptionClear(); return false; }
         view = static_cast<jfloatArray>(env->NewGlobalRef(env->NewFloatArray(16)));
         projection = static_cast<jfloatArray>(env->NewGlobalRef(env->NewFloatArray(16)));
-        return view && projection;
+        handPositions = static_cast<jfloatArray>(env->NewGlobalRef(env->NewFloatArray(12)));
+        handInfo = static_cast<jlongArray>(env->NewGlobalRef(env->NewLongArray(8)));
+        return view && projection && handPositions && handInfo;
     }
     void check() { if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); ++exceptions; } }
     void call(jmethodID m) { env->CallStaticVoidMethod(cls, m); check(); }
     void release() {
         if (view) env->DeleteGlobalRef(view);
         if (projection) env->DeleteGlobalRef(projection);
-        view = projection = nullptr;
+        if (handPositions) env->DeleteGlobalRef(handPositions);
+        if (handInfo) env->DeleteGlobalRef(handInfo);
+        view = projection = handPositions = nullptr;
+        handInfo = nullptr;
     }
 };
 
@@ -198,7 +206,7 @@ std::string operationsJson(const std::vector<xrspatial::Operation>& ops) {
 }
 
 std::string runSession(JNIEnv* env, jclass nativeClass, jobject activity, jobject context, jobject surfaceObject,
-                       const std::string& appName, float nearZ, float farZ) {
+                       const std::string& appName, float nearZ, float farZ, bool handTracking) {
     std::lock_guard<std::mutex> lock(runMutex);
     auto stage = [](const std::string& name, const std::string& status, const std::string& failure, const std::string& extra = "") {
         return "\"" + name + "\":{\"status\":" + xrspatial::jsonQuote(status) + ",\"failure\":" + xrspatial::jsonQuote(failure) + extra + "}";
@@ -224,8 +232,8 @@ std::string runSession(JNIEnv* env, jclass nativeClass, jobject activity, jobjec
     JavaVM* vm = nullptr;
     env->GetJavaVM(&vm);
     jobject activityRef = env->NewGlobalRef(activity), contextRef = env->NewGlobalRef(context);
-    std::string graphics = stage("graphics", "NOT_STARTED", ""), loop = "\"loop\":null";
-    xrspatial::XrInstanceSetup setup(fns, {vm, contextRef, activityRef}, appName);
+    std::string graphics = stage("graphics", "NOT_STARTED", ""), loop = "\"loop\":null", hands = "null";
+    xrspatial::XrInstanceSetup setup(fns, {vm, contextRef, activityRef}, appName, handTracking);
     const bool created = setup.create();
     if (created) {
         const XrInstance instance = setup.instance();
@@ -299,8 +307,36 @@ std::string runSession(JNIEnv* env, jclass nativeClass, jobject activity, jobjec
                     }
                     return gl.end(hud);
                 };
+                // Hand trackers only when requested, enabled and reported supported; destroyed before the session.
+                xrspatial::HandTracking handTracker;
+                bool handsCreated = false;
+                if (setup.info().handTrackingSupported) {
+                    handsCreated = handTracker.create(getProc, instance, session);
+                    __android_log_print(ANDROID_LOG_INFO, kTag, "hand trackers: %s", handsCreated ? "created" : handTracker.failure().c_str());
+                }
+                if (handsCreated) io.locateExtra = [&](uint32_t index, XrSpace local, XrTime time) {
+                    if (!handTracker.running()) return;
+                    const auto both = handTracker.locate(local, time);
+                    jlong info[8];
+                    jfloat positions[12];
+                    for (unsigned hand = 0; hand < 2; ++hand) {
+                        const auto& h = both[hand];
+                        info[hand * 4] = jlong(h.locate);
+                        info[hand * 4 + 1] = h.active ? 1 : 0;
+                        info[hand * 4 + 2] = jlong(h.palmFlags);
+                        info[hand * 4 + 3] = jlong(h.indexTipFlags);
+                        const float values[6] = {h.palm.x, h.palm.y, h.palm.z, h.indexTip.x, h.indexTip.y, h.indexTip.z};
+                        std::copy(values, values + 6, positions + hand * 6);
+                    }
+                    env->SetLongArrayRegion(java.handInfo, 0, 8, info);
+                    env->SetFloatArrayRegion(java.handPositions, 0, 12, positions);
+                    env->CallStaticVoidMethod(java.cls, java.hands, jlong(index), jlong(time), java.handInfo, java.handPositions);
+                    java.check();
+                };
                 xrspatial::FrameLoop frameLoop(getProc, instance, session, setup.info().blendMode, limits, io);
                 loop = "\"loop\":" + frameLoop.execute().toJson();
+                handTracker.destroy();
+                if (setup.info().handTrackingSupported) hands = handTracker.toJson();
                 const XrResult destroyed = reinterpret_cast<PFN_xrDestroySession>(destroyFn)(session);
                 graphics = stage("graphics", destroyed == XR_SUCCESS ? "COMPLETED" : "ERROR", destroyed == XR_SUCCESS ? "" : "xrDestroySession:" + std::to_string(int(destroyed)),
                                  ",\"surface\":" + xrspatial::jsonQuote(gl.surfaceText) + ",\"gles\":" + xrspatial::jsonQuote(gl.version) +
@@ -319,6 +355,8 @@ std::string runSession(JNIEnv* env, jclass nativeClass, jobject activity, jobjec
     const std::string instanceJson = stage("instance", created ? "COMPLETED" : "ERROR", failure,
         ",\"runtimeName\":" + xrspatial::jsonQuote(info.runtimeName) + ",\"runtimeVersion\":" + xrspatial::jsonQuote(info.runtimeVersion) +
         ",\"systemName\":" + xrspatial::jsonQuote(info.systemName) + ",\"extensions\":" + stringsJson(info.extensions) +
+        ",\"handTracking\":{\"requested\":" + (handTracking ? "true" : "false") + ",\"enabled\":" + (info.handTrackingEnabled ? "true" : "false") +
+        ",\"supported\":" + (info.handTrackingSupported ? "true" : "false") + ",\"trackers\":" + hands + "}" +
         ",\"operations\":" + operationsJson(info.operations));
     env->DeleteGlobalRef(activityRef);
     env->DeleteGlobalRef(contextRef);
@@ -339,8 +377,8 @@ std::string javaString(JNIEnv* env, jstring text) {
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_alexskuznetsov_xrspatial_XrSpatialNative_run(JNIEnv* env, jclass cls, jobject activity, jobject context, jobject surface,
-                                                           jstring appName, jfloat nearZ, jfloat farZ) {
-    const std::string result = runSession(env, cls, activity, context, surface, javaString(env, appName), nearZ, farZ);
+                                                           jstring appName, jfloat nearZ, jfloat farZ, jboolean handTracking) {
+    const std::string result = runSession(env, cls, activity, context, surface, javaString(env, appName), nearZ, farZ, handTracking == JNI_TRUE);
     return env->NewStringUTF(result.c_str());
 }
 

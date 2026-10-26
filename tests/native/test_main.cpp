@@ -1,6 +1,7 @@
 // Host tests of the native headers of :xrspatial against fake OpenXR entry points (no device, no GL).
 // Build and run: python tools/run_native_tests.py
 #include "frame_loop_test.h"
+#include "hand_tracking_test.h"
 #include "hud_text_test.h"
 #include "render_math_test.h"
 #include "xr_instance_test.h"
@@ -16,7 +17,8 @@ int main() {
     auto pass = [&](const char* name) { ++passed; std::cout << "PASS " << name << '\n'; };
     const std::pair<const char*, Suite> suites[] = {
         {"xr_instance", xr_instance_tests::run}, {"frame_loop", frame_loop_tests::run},
-        {"render_math", render_math_tests::run}, {"hud_text", hud_text_tests::run}};
+        {"hand_tracking", hand_tracking_tests::run}, {"render_math", render_math_tests::run},
+        {"hud_text", hud_text_tests::run}};
     for (const auto& [name, run] : suites) {
         try {
             run(expect, pass);

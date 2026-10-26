@@ -162,7 +162,8 @@ inline XrResult XRAPI_CALL getProc(XrInstance, const char* name, PFN_xrVoidFunct
 inline xrspatial::FrameLoopSummary runLoop(Fake& f, std::vector<std::string>& lines, int64_t durationMs = 1000,
                                          std::function<bool(const std::string&, bool)> emit = {},
                                          std::function<void(const xrspatial::LocatedPose&)> sample = {},
-                                         decltype(xrspatial::FrameLoopIo::frameViews) frameViews = {}) {
+                                         decltype(xrspatial::FrameLoopIo::frameViews) frameViews = {},
+                                         decltype(xrspatial::FrameLoopIo::locateExtra) locateExtra = {}) {
     fake = &f;
     xrspatial::FrameLoopLimits limits;
     limits.durationMs = durationMs;
@@ -174,6 +175,7 @@ inline xrspatial::FrameLoopSummary runLoop(Fake& f, std::vector<std::string>& li
     io.idle = [&] { f.clockNs += 10000000; };
     io.sample = sample;
     io.frameViews = frameViews;
+    io.locateExtra = locateExtra;
     unsigned draws = 0;
     io.drawEye = [&](unsigned, uint32_t image, uint32_t w, uint32_t h, uint64_t) { ++draws; return image >= 10 && w == 640 && h == 480; };
     xrspatial::FrameLoop probe(getProc, f.instance, f.session, XR_ENVIRONMENT_BLEND_MODE_ADDITIVE, limits, io);
@@ -308,6 +310,15 @@ inline void run(const std::function<void(bool, const char*)>& expect, const std:
         expect(calls == s.framesBegun && raw, "frame views once per begun frame: raw head location and the layer's eye views");
         expect(count(lines, "\"eyeViews\":[{\"position\":[-0.0299999993") == 6, "eye geometry journaled in the first frames (pending + frame lines)");
         pass("frame_loop_frame_views_for_world_scene");
+    }
+    {
+        Fake f; std::vector<std::string> lines; unsigned calls = 0; bool same = true;
+        auto s = runLoop(f, lines, 1000, {}, {}, {}, [&](uint32_t index, XrSpace local, XrTime time) {
+            same = same && index == calls && local == f.local && time == f.time;
+            ++calls;
+        });
+        expect(calls == s.framesBegun && same, "extra locate once per begun frame with LOCAL and the frame's display time");
+        pass("frame_loop_locate_extra_uses_loop_space_and_time");
     }
 }
 }  // namespace frame_loop_tests

@@ -21,6 +21,7 @@ import java.util.concurrent.Executors
  *   [WarmupGate] (the runtime returns stale and broken poses for the first ~1 s of every session).
  * - If a [renderer] is set, it draws each eye of every frame whose pose is [SampleQuality.USABLE].
  * - Optional head-locked text via [setHud].
+ * - Experimental: with [Config.handTracking], both hands of every frame go to [handListener] (`XR_EXT_hand_tracking`).
  *
  * Losing window focus (another app or the system screen recorder in front) makes the runtime end the
  * session; the session then goes to [TrackingState.PAUSED] instead of reporting an error, and starts again
@@ -43,10 +44,18 @@ class XrSpatialSession(
         val farZ: Float = 100f,
         /** Show "WAITING FOR TRACKING" in the centre while the pose is not usable yet. */
         val waitingHud: Boolean = true,
+        /**
+         * Experimental: enable `XR_EXT_hand_tracking` if the runtime advertises it and reports support, and deliver
+         * hands to [handListener]. Whether the X3 Pro tracks hands is not established; off by default.
+         */
+        val handTracking: Boolean = false,
     )
 
     /** Set before [start]; read on the render thread. */
     @Volatile var renderer: XrRenderer? = null
+
+    /** Receives hands when [Config.handTracking] is on and the runtime supports it; called on the render thread. */
+    @Volatile var handListener: HandListener? = null
 
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "xrspatial-bind").apply { isDaemon = true } }
@@ -178,13 +187,21 @@ class XrSpatialSession(
                 if (lastQuality != SampleQuality.USABLE) return
                 renderer?.onDrawEye(EyeFrame(eye, view, projection, width, height, head))
             }
+            override fun onHands(index: Long, xrTime: Long, info: LongArray, positions: FloatArray) {
+                val target = handListener ?: return
+                fun hand(h: Int) = HandSample(session, index, xrTime, if (h == 0) Hand.LEFT else Hand.RIGHT,
+                    info[h * 4].toInt(), info[h * 4 + 1] != 0L,
+                    info[h * 4 + 2], Vector3(positions[h * 6], positions[h * 6 + 1], positions[h * 6 + 2]),
+                    info[h * 4 + 3], Vector3(positions[h * 6 + 3], positions[h * 6 + 4], positions[h * 6 + 5]))
+                target.onHands(hand(0), hand(1))
+            }
         }
         XrSpatialNative.resetCancel()
         nativeRunning = true
         setState(listener, TrackingState.RUNNING)
         if (stopRequested) XrSpatialNative.cancel()
         Thread({
-            val result = runCatching { XrSpatialNative.run(activity, activity.applicationContext, surface, config.appName, config.nearZ, config.farZ) }
+            val result = runCatching { XrSpatialNative.run(activity, activity.applicationContext, surface, config.appName, config.nearZ, config.farZ, config.handTracking) }
             main.post {
                 nativeRunning = false
                 val run = result.getOrNull()?.let { parse(it) }
@@ -208,6 +225,8 @@ class XrSpatialSession(
         instance?.optString("systemName")?.takeIf { it.isNotEmpty() }?.let { facts["systemName"] = it }
         // Advertised OpenXR extensions, e.g. to notice spatial anchors or containers in a future runtime.
         instance?.optJSONArray("extensions")?.let { a -> facts["extensions"] = (0 until a.length()).joinToString(",") { a.optString(it) } }
+        // Experimental hand tracking: requested / enabled / supported and the trackers' results, raw JSON.
+        instance?.optJSONObject("handTracking")?.let { facts["handTracking"] = it.toString() }
         graphics?.optString("surface")?.takeIf { it.isNotEmpty() }?.let { facts["surface"] = it }
         loop?.optString("endReason")?.let { facts["lastEndReason"] = it }
         return RunResult(

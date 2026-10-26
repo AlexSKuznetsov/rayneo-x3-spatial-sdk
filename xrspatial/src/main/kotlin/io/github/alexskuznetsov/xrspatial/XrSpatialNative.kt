@@ -9,7 +9,8 @@ internal object XrSpatialNative {
     init { System.loadLibrary("xrspatial") }
 
     /** Blocks until [cancel] (or a failure); returns the result JSON ({"instance","graphics","loop"}). */
-    @JvmStatic external fun run(activity: Activity, context: Context, surface: Surface, appName: String, nearZ: Float, farZ: Float): String
+    @JvmStatic external fun run(activity: Activity, context: Context, surface: Surface, appName: String, nearZ: Float, farZ: Float,
+                             handTracking: Boolean): String
     @JvmStatic external fun cancel()
     @JvmStatic external fun resetCancel()
     @JvmStatic external fun setHud(top: String, bottom: String, centre: String)
@@ -21,6 +22,8 @@ internal object XrSpatialNative {
         fun onSample(index: Long, xrTime: Long, hostReceiptNs: Long, flags: Long,
                      px: Float, py: Float, pz: Float, qx: Float, qy: Float, qz: Float, qw: Float)
         fun onDrawEye(eye: Int, view: FloatArray, projection: FloatArray, width: Int, height: Int)
+        /** [info]: per hand (left, right) locate result, active, palm flags, index-tip flags; [positions]: palm, tip xyz each. */
+        fun onHands(index: Long, xrTime: Long, info: LongArray, positions: FloatArray)
     }
 
     @Volatile var callbacks: Callbacks? = null
@@ -34,5 +37,8 @@ internal object XrSpatialNative {
     }
     @JvmStatic fun onDrawEye(eye: Int, view: FloatArray, projection: FloatArray, width: Int, height: Int) {
         callbacks?.onDrawEye(eye, view, projection, width, height)
+    }
+    @JvmStatic fun onHands(index: Long, xrTime: Long, info: LongArray, positions: FloatArray) {
+        callbacks?.onHands(index, xrTime, info, positions)
     }
 }

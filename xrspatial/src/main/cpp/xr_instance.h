@@ -7,6 +7,7 @@
 //      XR_KHR_android_create_instance, but without the chain xrCreateInstance crashes; the name is enabled
 //      only when it is advertised.
 //   -> xrGetSystem(HMD) -> PRIMARY_STEREO view sizes and blend mode.
+// XR_EXT_hand_tracking is enabled only when the app asks for it and the runtime advertises it.
 // The loader functions come from the vendor loader library that the RayNeo SDK already loaded.
 #include "xr_common.h"
 #include <jni.h>  // openxr_platform.h needs the JNI types declared first
@@ -41,6 +42,8 @@ struct InstanceInfo {
     std::vector<Operation> operations;
     std::string runtimeName, runtimeVersion, systemName;
     std::vector<std::string> extensions;  // as advertised by xrEnumerateInstanceExtensionProperties
+    bool handTrackingEnabled = false;     // XR_EXT_hand_tracking requested, advertised and enabled
+    bool handTrackingSupported = false;   // XrSystemHandTrackingPropertiesEXT::supportsHandTracking
     bool positionTrackingAdvertised = false, orientationTrackingAdvertised = false;
     uint32_t viewWidth = 0, viewHeight = 0;
     XrEnvironmentBlendMode blendMode = XR_ENVIRONMENT_BLEND_MODE_ADDITIVE;
@@ -48,8 +51,8 @@ struct InstanceInfo {
 
 class XrInstanceSetup {
 public:
-    XrInstanceSetup(const LoaderFunctions& functions, AndroidHandles android, std::string applicationName)
-        : xr(functions), handles(android), appName(std::move(applicationName)) {}
+    XrInstanceSetup(const LoaderFunctions& functions, AndroidHandles android, std::string applicationName, bool requestHandTracking = false)
+        : xr(functions), handles(android), appName(std::move(applicationName)), handTracking(requestHandTracking) {}
     ~XrInstanceSetup() { destroy(); }
     XrInstanceSetup(const XrInstanceSetup&) = delete;
     XrInstanceSetup& operator=(const XrInstanceSetup&) = delete;
@@ -73,22 +76,25 @@ public:
         if (count && !require("xrEnumerateInstanceExtensionProperties(data)", xr.enumerateExtensions(nullptr, count, &count, extensions.data()))) return false;
         extensions.resize(std::min<size_t>(count, extensions.size()));
         for (const auto& e : extensions) info_.extensions.emplace_back(e.extensionName);
-        const bool androidAdvertised = std::any_of(extensions.begin(), extensions.end(), [](const XrExtensionProperties& e) {
-            return std::strcmp(e.extensionName, XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME) == 0;
-        });
+        auto advertised = [&](const char* name) {
+            return std::any_of(extensions.begin(), extensions.end(), [&](const XrExtensionProperties& e) { return std::strcmp(e.extensionName, name) == 0; });
+        };
+        std::vector<const char*> enabled;
+        if (advertised(XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME)) enabled.push_back(XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME);
+        info_.handTrackingEnabled = handTracking && advertised(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+        if (info_.handTrackingEnabled) enabled.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
 
         XrInstanceCreateInfoAndroidKHR androidInfo{XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR};
         androidInfo.applicationVM = handles.vm;
         androidInfo.applicationActivity = handles.activity;
-        const char* enabled[] = {XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME};
         XrInstanceCreateInfo createInfo{XR_TYPE_INSTANCE_CREATE_INFO};
         createInfo.next = &androidInfo;  // always: see the header comment
         std::strncpy(createInfo.applicationInfo.applicationName, appName.c_str(), XR_MAX_APPLICATION_NAME_SIZE - 1);
         std::strncpy(createInfo.applicationInfo.engineName, "xrspatial", XR_MAX_ENGINE_NAME_SIZE - 1);
         createInfo.applicationInfo.applicationVersion = 1;
         createInfo.applicationInfo.apiVersion = XR_API_VERSION_1_0;
-        createInfo.enabledExtensionCount = androidAdvertised ? 1u : 0u;
-        createInfo.enabledExtensionNames = androidAdvertised ? enabled : nullptr;
+        createInfo.enabledExtensionCount = uint32_t(enabled.size());
+        createInfo.enabledExtensionNames = enabled.empty() ? nullptr : enabled.data();
         if (!require("xrCreateInstance", xr.createInstance(&createInfo, &instance_))) { instance_ = XR_NULL_HANDLE; return false; }
         if (instance_ == XR_NULL_HANDLE) return fail("xrCreateInstance:null");
 
@@ -104,10 +110,13 @@ public:
         if (!require("xrGetSystem(HMD)", xr.getSystem(instance_, &systemInfo, &system_))) return false;
         if (system_ == XR_NULL_SYSTEM_ID) return fail("xrGetSystem:null");
         XrSystemProperties systemProperties{XR_TYPE_SYSTEM_PROPERTIES};
+        XrSystemHandTrackingPropertiesEXT handProperties{XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT};
+        if (info_.handTrackingEnabled) systemProperties.next = &handProperties;
         if (!require("xrGetSystemProperties", xr.getSystemProperties(instance_, system_, &systemProperties))) return false;
         info_.systemName = systemProperties.systemName;
         info_.positionTrackingAdvertised = systemProperties.trackingProperties.positionTracking == XR_TRUE;
         info_.orientationTrackingAdvertised = systemProperties.trackingProperties.orientationTracking == XR_TRUE;
+        info_.handTrackingSupported = info_.handTrackingEnabled && handProperties.supportsHandTracking == XR_TRUE;
 
         const auto stereo = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
         uint32_t viewCount = 0;
@@ -145,6 +154,7 @@ private:
     LoaderFunctions xr;
     AndroidHandles handles;
     std::string appName;
+    bool handTracking;
     XrInstance instance_ = XR_NULL_HANDLE;
     XrSystemId system_ = XR_NULL_SYSTEM_ID;
     InstanceInfo info_;

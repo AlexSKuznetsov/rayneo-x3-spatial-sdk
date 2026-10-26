@@ -63,6 +63,9 @@ struct FrameLoopIo {
     // Optional, called once per begun frame before the eyes are drawn (world-locked scene): whether the
     // head locate returned XR_SUCCESS, the raw head location, and the eye views used for the layer.
     std::function<void(bool located, const XrSpaceLocation& head, const std::array<XrView, 2>& views)> frameViews;
+    // Optional, called once per begun frame right after the head locate, with the LOCAL space and the frame's
+    // display time: extra per-frame locates (hand tracking) that must use the loop's space and time.
+    std::function<void(uint32_t index, XrSpace local, XrTime time)> locateExtra;
 };
 
 template <class T> T xrStruct(XrStructureType type) {
@@ -395,6 +398,7 @@ class FrameLoop {
             }
             if (io.sample) io.sample({index, time, receiptNs, flags, head.pose});
         }
+        if (io.locateExtra) io.locateExtra(index, localSpace, time);
 
         auto viewInfo = xrStruct<XrViewLocateInfo>(XR_TYPE_VIEW_LOCATE_INFO);
         viewInfo.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;

@@ -7,9 +7,10 @@
 
 namespace xr_instance_tests {
 struct Fake {
-    bool advertiseAndroid = false, zeroViewSize = false;
+    bool advertiseAndroid = false, advertiseHands = false, supportsHands = true, zeroViewSize = false;
     std::string failAt;
-    bool initialized = false, chained = false, androidEnabled = false;
+    bool initialized = false, chained = false, androidEnabled = false, handsEnabled = false, handPropertiesChained = false;
+    std::vector<std::string> enabled;
     unsigned destroyed = 0;
     XrResult call(const std::string& name) const { return name == failAt ? XR_ERROR_RUNTIME_FAILURE : XR_SUCCESS; }
 } *fake;
@@ -28,11 +29,11 @@ inline XrResult XRAPI_CALL getProc(XrInstance, const char* name, PFN_xrVoidFunct
 }
 inline XrResult XRAPI_CALL extensions(const char*, uint32_t cap, uint32_t* count, XrExtensionProperties* out) {
     if (!fake->initialized) throw std::runtime_error("ENUMERATE_BEFORE_INIT");
-    *count = fake->advertiseAndroid ? 2 : 1;
-    if (cap) {
-        std::strcpy(out[0].extensionName, "XR_KHR_opengl_es_enable");
-        if (fake->advertiseAndroid) std::strcpy(out[1].extensionName, XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME);
-    }
+    std::vector<const char*> names{"XR_KHR_opengl_es_enable"};
+    if (fake->advertiseAndroid) names.push_back(XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME);
+    if (fake->advertiseHands) names.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+    *count = uint32_t(names.size());
+    for (uint32_t i = 0; i < cap && i < names.size(); ++i) std::strcpy(out[i].extensionName, names[i]);
     return XR_SUCCESS;
 }
 inline XrResult XRAPI_CALL createInstance(const XrInstanceCreateInfo* info, XrInstance* out) {
@@ -41,8 +42,10 @@ inline XrResult XRAPI_CALL createInstance(const XrInstanceCreateInfo* info, XrIn
     if (!android || android->type != XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR || android->applicationActivity != reinterpret_cast<void*>(0x33))
         throw std::runtime_error("MISSING_ANDROID_CREATE_INFO_CRASHES_DEVICE_RUNTIME");
     fake->chained = true;
-    fake->androidEnabled = info->enabledExtensionCount == 1 &&
-                           std::string(info->enabledExtensionNames[0]) == XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME;
+    for (uint32_t i = 0; i < info->enabledExtensionCount; ++i) fake->enabled.emplace_back(info->enabledExtensionNames[i]);
+    auto has = [](const char* name) { return std::find(fake->enabled.begin(), fake->enabled.end(), name) != fake->enabled.end(); };
+    fake->androidEnabled = has(XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME);
+    fake->handsEnabled = has(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
     const XrResult r = fake->call("xrCreateInstance");
     if (r == XR_SUCCESS) *out = kInstance;
     return r;
@@ -66,6 +69,12 @@ inline XrResult XRAPI_CALL systemProperties(XrInstance, XrSystemId, XrSystemProp
     std::strcpy(p->systemName, "Fake glasses");
     p->trackingProperties.positionTracking = XR_TRUE;
     p->trackingProperties.orientationTracking = XR_TRUE;
+    auto* hands = static_cast<XrSystemHandTrackingPropertiesEXT*>(p->next);
+    if (hands) {
+        if (hands->type != XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT || !fake->handsEnabled) throw std::runtime_error("HAND_PROPERTIES");
+        fake->handPropertiesChained = true;
+        hands->supportsHandTracking = fake->supportsHands ? XR_TRUE : XR_FALSE;
+    }
     return XR_SUCCESS;
 }
 inline XrResult XRAPI_CALL views(XrInstance, XrSystemId, XrViewConfigurationType type, uint32_t cap, uint32_t* count, XrViewConfigurationView* out) {
@@ -106,7 +115,7 @@ inline void run(const std::function<void(bool, const char*)>& expect, const std:
         {
             xrspatial::XrInstanceSetup setup(functions(), handles(), "test");
             expect(setup.create() && setup.instance() == kInstance && setup.system() == 7, "instance and HMD system created");
-            expect(f.chained && !f.androidEnabled, "Android create info chained although the extension is not advertised; name not enabled");
+            expect(f.chained && !f.androidEnabled && f.enabled.empty(), "Android create info chained although the extension is not advertised; name not enabled");
             expect(setup.info().extensions == std::vector<std::string>{"XR_KHR_opengl_es_enable"}, "advertised extensions recorded");
             const auto& info = setup.info();
             expect(info.failure.empty() && info.runtimeName == "Fake runtime" && info.runtimeVersion == "1.1.7" && info.systemName == "Fake glasses" &&
@@ -122,6 +131,28 @@ inline void run(const std::function<void(bool, const char*)>& expect, const std:
         expect(setup.create() && f.androidEnabled, "advertised extension is enabled");
         expect(setup.info().viewWidth == 640 && setup.info().viewHeight == 480, "zero recommended size falls back to 640x480");
         pass("xr_instance_advertised_extension_and_size_fallback");
+    }
+    {
+        Fake f; f.advertiseHands = true; fake = &f;
+        xrspatial::XrInstanceSetup off(functions(), handles(), "test");
+        expect(off.create() && !f.handsEnabled && !f.handPropertiesChained && !off.info().handTrackingEnabled, "hand tracking off unless requested");
+    }
+    {
+        Fake f; f.advertiseAndroid = true; f.advertiseHands = true; fake = &f;
+        xrspatial::XrInstanceSetup on(functions(), handles(), "test", true);
+        expect(on.create() && f.androidEnabled && f.handsEnabled && f.enabled.size() == 2 && f.handPropertiesChained &&
+               on.info().handTrackingEnabled && on.info().handTrackingSupported, "requested and advertised: enabled, support queried");
+    }
+    {
+        Fake f; f.advertiseHands = true; f.supportsHands = false; fake = &f;
+        xrspatial::XrInstanceSetup unsupported(functions(), handles(), "test", true);
+        expect(unsupported.create() && unsupported.info().handTrackingEnabled && !unsupported.info().handTrackingSupported, "system without hand support reported");
+    }
+    {
+        Fake f; fake = &f;
+        xrspatial::XrInstanceSetup absent(functions(), handles(), "test", true);
+        expect(absent.create() && !f.handsEnabled && !f.handPropertiesChained && !absent.info().handTrackingEnabled, "not advertised: never enabled");
+        pass("xr_instance_hand_tracking_opt_in");
     }
     {
         Fake f; f.failAt = "xrCreateInstance"; fake = &f;
