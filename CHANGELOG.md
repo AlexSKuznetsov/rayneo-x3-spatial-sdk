@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 — in development
+## 0.2.0 — 2026-10-25
 
 - New module `xrspatial-scene`: `SpatialScene`, `SpatialHost`, `SpatialPanel` (any Android View),
   `SpatialText`, `SpatialImage`, `Placement` (`InFrontOfUser`, `InLocal`, `HeadLocked`). Kotlin + GLES only.
