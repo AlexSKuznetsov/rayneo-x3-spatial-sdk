@@ -1,6 +1,7 @@
 #pragma once
 // Optional XR_EXT_hand_tracking (experimental): one tracker per hand, located in LOCAL every frame.
-// The X3 Pro runtime 1.1.7.9 advertises the extension; whether it tracks hands is what this probes.
+// The X3 Pro runtime 1.1.7.9 advertises the extension and creates trackers, but its first
+// xrLocateHandJointsEXT crashes (null dereference inside the runtime), also in a FOCUSED session.
 // Standard OpenXR only (functions from xrGetInstanceProcAddr); host-testable with fake entry points.
 #include "xr_common.h"
 #include <array>

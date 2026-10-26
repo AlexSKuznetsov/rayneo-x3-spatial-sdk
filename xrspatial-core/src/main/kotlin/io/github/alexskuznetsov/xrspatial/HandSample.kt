@@ -7,8 +7,8 @@ enum class Hand { LEFT, RIGHT }
  * same raw [xrTime] as the frame's head pose. Only the palm and the index fingertip are passed on.
  *
  * Values are raw: positions are whatever the runtime wrote, also when the flags say they are not valid. Use
- * [palmValid] / [indexTipValid] before using a position. Whether the RayNeo X3 Pro runtime tracks hands at all
- * is not established (see docs/x3-pro-runtime-notes.md).
+ * [palmValid] / [indexTipValid] before using a position. On the RayNeo X3 Pro runtime 1.1.7.9 locating hands
+ * crashes inside the runtime, so no samples exist there (see docs/x3-pro-runtime-notes.md).
  */
 data class HandSample(
     val sessionEpoch: Int,

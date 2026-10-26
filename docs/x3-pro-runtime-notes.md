@@ -36,6 +36,14 @@ guarantees; other firmware may differ. Each item says what this library does abo
 | Covering the cameras for 5 s: flags stayed 15, ≈5 cm drift kept afterwards. | Nothing; the runtime gives no loss signal. |
 | Metric scale. | NOT TESTED: moves of 0.4–0.5 m looked plausible but were not measured against a reference distance. |
 
+## Input
+
+| Observation | What the library does |
+| --- | --- |
+| During an XR session the temple touchpad reaches the Activity as ordinary **touchscreen** `MotionEvent`s (`dispatchTouchEvent`, source `0x5002`, device `cyttsp5_mt`), mapped like a 1280×480 screen: x along the temple, y across it. No key, generic-motion or trackball events; swipes are not mapped to BACK. Tap: DOWN+UP, 60–90 ms, no MOVE. Swipe forward/back: x runs to 1282 / to 2 in ~100–130 ms. Double tap: two taps ~0.2 s apart (no system double-tap event). Two-finger touches arrive as `ACTION_POINTER_DOWN` with 2 pointers. A second touch controller `cyttsp6_mt` exists; no events from it were seen. | Nothing yet; apps can use standard touch handling. Checked with the `sample-input` probe. |
+| Holding the touchpad for ≳0.8 s makes the system take window focus; the session pauses and resumes ~3.7 s later. | Handled as a focus-loss pause. Do not use long press as an app gesture. |
+| `XR_EXT_hand_tracking` is the only advertised extension; the system reports `supportsHandTracking`, and `xrCreateHandTrackerEXT` succeeds for both hands, but the **first `xrLocateHandJointsEXT` crashes the process** inside the runtime (SIGSEGV, null dereference in `HandTracker::locateHandJoints`), also when the session is FOCUSED (2 of 2 runs). | `Config.handTracking` stays off by default and is documented as crashing on this runtime. Hands: no data obtainable. |
+
 ## Views and projection
 
 | Observation | What the library does |

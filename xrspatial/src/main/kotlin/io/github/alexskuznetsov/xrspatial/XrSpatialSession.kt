@@ -46,7 +46,8 @@ class XrSpatialSession(
         val waitingHud: Boolean = true,
         /**
          * Experimental: enable `XR_EXT_hand_tracking` if the runtime advertises it and reports support, and deliver
-         * hands to [handListener]. Whether the X3 Pro tracks hands is not established; off by default.
+         * hands to [handListener]. Off by default. **Do not enable on X3 Pro runtime 1.1.7.9**: there the runtime
+         * advertises and creates hand trackers, but its first `xrLocateHandJointsEXT` crashes the process.
          */
         val handTracking: Boolean = false,
     )

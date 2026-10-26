@@ -103,7 +103,8 @@ Tested on one X3 Pro (runtime 1.1.7.9, RayNeo SDK 1.1.2):
 ## Roadmap
 
 - **0.3**: Jetpack Compose content in panels
-- **0.4**: input (gaze, touchpad, maybe hand tracking); recorded pose traces for testing without the glasses
+- **0.4**: input (gaze + touchpad tap; the touchpad arrives as ordinary touch events, hand tracking crashes in
+  the current runtime); recorded pose traces for testing without the glasses
 - **Later**: spatial anchors or OpenXR spatial containers, if the RayNeo runtime starts to support them
 
 ## Licence

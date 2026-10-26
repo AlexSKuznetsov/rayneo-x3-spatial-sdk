@@ -19,7 +19,8 @@ class XrSpatialSession(activity: Activity, surfaceView: SurfaceView, config: Con
 
 | Member | Description |
 | --- | --- |
-| `Config(appName = "xrspatial", nearZ = 0.05f, farZ = 100f, waitingHud = true)` | `appName` goes to `xrCreateInstance`; near/far planes of `EyeFrame.projection`; `waitingHud` shows "WAITING FOR TRACKING" until the first `USABLE` pose. |
+| `Config(appName = "xrspatial", nearZ = 0.05f, farZ = 100f, waitingHud = true, handTracking = false)` | `appName` goes to `xrCreateInstance`; near/far planes of `EyeFrame.projection`; `waitingHud` shows "WAITING FOR TRACKING" until the first `USABLE` pose. `handTracking`: experimental, **crashes on X3 Pro runtime 1.1.7.9** (see the runtime notes); leave it off there. |
+| `handListener: HandListener?` | With `handTracking` on and supported: both hands every frame (`HandSample`: raw locate result, `active`, palm and index-tip flags and positions in LOCAL), on the render thread. |
 | `start(renderer: XrRenderer, listener: PoseListener): Result<Unit>` | Sets `renderer` and starts. |
 | `start(listener: PoseListener): Result<Unit>` | Starts a session and returns at once. Must be called on the main thread, with the `SurfaceView`'s surface valid and the Activity resumed and focused. Immediate failures come back in the `Result`; later ones go to `PoseListener.onError`. |
 | `stop()` | Asks the frame loop to end; `PoseListener.onStopped` follows when everything is released. Also ends a pause. Call it from `onPause` and `surfaceDestroyed`. |

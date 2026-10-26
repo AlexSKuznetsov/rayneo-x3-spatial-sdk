@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- New sample `sample-input`: logs every input event the Activity receives during an XR session. Run on the
+  glasses: the temple touchpad arrives as ordinary touchscreen events; a long press takes focus away
+  (see the runtime notes).
+- Experimental `XrSpatialSession.Config.handTracking` + `handListener` (`XR_EXT_hand_tracking`, palm and index
+  tip in LOCAL), off by default. **Crashes on X3 Pro runtime 1.1.7.9**: the runtime's first hand locate
+  segfaults. Kept for other runtimes.
+
 ## 0.2.0 — 2026-10-25
 
 - New module `xrspatial-scene`: `SpatialScene`, `SpatialHost`, `SpatialPanel` (any Android View),

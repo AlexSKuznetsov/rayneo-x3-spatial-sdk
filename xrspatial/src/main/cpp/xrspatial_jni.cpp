@@ -314,8 +314,8 @@ std::string runSession(JNIEnv* env, jclass nativeClass, jobject activity, jobjec
                     handsCreated = handTracker.create(getProc, instance, session);
                     __android_log_print(ANDROID_LOG_INFO, kTag, "hand trackers: %s", handsCreated ? "created" : handTracker.failure().c_str());
                 }
-                // Device (o3-hands-1): xrLocateHandJointsEXT before the session was FOCUSED crashed inside the
-                // runtime (null dereference); hands are located only while FOCUSED.
+                // Hands are located only while FOCUSED (input is only meaningful then). On the X3 Pro runtime
+                // 1.1.7.9 xrLocateHandJointsEXT crashes inside the runtime either way.
                 if (handsCreated) io.locateExtra = [&](uint32_t index, XrSpace local, XrTime time, XrSessionState state) {
                     if (!handTracker.running() || state != XR_SESSION_STATE_FOCUSED) return;
                     const auto both = handTracker.locate(local, time);

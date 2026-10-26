@@ -8,7 +8,7 @@ Put the RayNeo libraries into `vendor/rayneo-sdk-1.1.2/` (see the README), set `
 `local.properties`, then:
 
 ```bash
-./gradlew :xrspatial:assembleRelease :xrspatial-scene:assembleRelease :sample:assembleDebug :sample-scene:assembleDebug
+./gradlew :xrspatial:assembleRelease :xrspatial-scene:assembleRelease :sample:assembleDebug :sample-scene:assembleDebug :sample-input:assembleDebug
 ```
 
 ## Tests
