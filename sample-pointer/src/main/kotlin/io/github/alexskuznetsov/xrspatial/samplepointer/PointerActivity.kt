@@ -6,6 +6,12 @@ import android.os.Bundle
 import android.util.Log
 import android.view.MotionEvent
 import android.widget.TextView
+import io.github.alexskuznetsov.xrspatial.PoseListener
+import io.github.alexskuznetsov.xrspatial.PoseSample
+import io.github.alexskuznetsov.xrspatial.SampleQuality
+import io.github.alexskuznetsov.xrspatial.SpatialError
+import io.github.alexskuznetsov.xrspatial.TrackingConfidence
+import io.github.alexskuznetsov.xrspatial.TrackingState
 import io.github.alexskuznetsov.xrspatial.Vector3
 import io.github.alexskuznetsov.xrspatial.scene.Placement
 import io.github.alexskuznetsov.xrspatial.scene.PointerListener
@@ -54,7 +60,13 @@ class PointerActivity : Activity() {
         }
         scene.pointer = pointer
         showInfo()
-        SpatialHost.attach(this, scene)
+        SpatialHost.attach(this, scene, listener = object : PoseListener {
+            override fun onSample(sample: PoseSample, quality: SampleQuality) = Unit
+            override fun onStateChanged(state: TrackingState) { Log.i(TAG, "state $state") }
+            override fun onConfidenceChanged(confidence: TrackingConfidence) { Log.i(TAG, "confidence $confidence") }
+            override fun onError(error: SpatialError) { Log.i(TAG, "error ${error.operation} ${error.resultCode}") }
+            override fun onStopped(reason: String) { Log.i(TAG, "stopped $reason") }
+        })
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
