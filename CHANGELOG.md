@@ -4,7 +4,8 @@
 
 - New module `xrspatial-scene`: `SpatialScene`, `SpatialHost`, `SpatialPanel` (any Android View),
   `SpatialText`, `SpatialImage`, `Placement` (`InFrontOfUser`, `InLocal`, `HeadLocked`). Kotlin + GLES only.
-  Host-tested; not yet run on the glasses.
+  Run on the glasses: the card is centred, readable and world-locked. Parentless panel views get
+  LayoutParams (changing a `SpatialText` crashed in the first device run).
 - New sample `sample-scene`: a maintenance card from an XML layout.
 - `xrspatial-core`: `Vector3`, `Quaternion`, `Pose3`, `PoseSample.pose`.
 - `XrSpatialSession.diagnostics()["extensions"]`: the OpenXR extensions the runtime advertises.

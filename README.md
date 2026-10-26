@@ -62,8 +62,9 @@ session.start(object : PoseListener {
 
 Version 0.2.0 in development, experimental. Tested on **one** RayNeo X3 Pro, OpenXR runtime
 `com.rayneo.xr.runtime` 1.1.7.9, RayNeo SDK 1.1.2. The scene API (`xrspatial-scene`, `sample-scene`) is
-new in 0.2 and so far tested on the host only (layout against the device's measured eye views); it has
-not run on the glasses yet. See [CHANGELOG.md](CHANGELOG.md).
+new in 0.2: on the glasses the maintenance card appeared at once in the middle of the view, its text was
+easy to read, and it held its place while the wearer walked and turned (one 60 s run, wearer's account).
+See [CHANGELOG.md](CHANGELOG.md).
 
 | Verified on that device | Not verified |
 | --- | --- |
@@ -72,6 +73,7 @@ not run on the glasses yet. See [CHANGELOG.md](CHANGELOG.md).
 | Stable start: nothing is drawn until the start-up garbage is over | Usable timestamps (see runtime notes: XrTime is constant) |
 | Eye-height marker lines up with the wearer's real eye height | Other firmware/runtime versions |
 | A second session in the same process (after a focus loss) starts and tracks | |
+| Scene API: a card from an XML layout appears centred, readable and world-locked | |
 
 Known issues seen on that device: after a ~90° head turn to the left the position once jumped by ~0.4 m
 and kept a ~0.3 m offset (2 of 2 tries); one ~1 m position jump in another 30 s run; the location flags

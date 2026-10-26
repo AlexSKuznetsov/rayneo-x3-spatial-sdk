@@ -4,8 +4,9 @@ Cards, images and text in the room, from ordinary Android code: no OpenGL, no C+
 Package `io.github.alexskuznetsov.xrspatial.scene`. Built on `xrspatial` (`XrSpatialSession`, `XrRenderer`);
 the lower levels stay available.
 
-Status: tested on the host (layout against the X3 Pro's measured eye views, 9 unit tests). Not yet run on
-the glasses.
+Status: host-tested (layout against the X3 Pro's measured eye views, 9 unit tests) and run once on the
+glasses for 60 s: the `sample-scene` card appeared at once in the middle of the view, the text (20–26 px at
+1.5 m) was easy to read and not too bright, and the card stayed in place while the wearer walked and turned.
 
 ## Minimal app
 
