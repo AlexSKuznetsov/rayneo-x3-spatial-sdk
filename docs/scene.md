@@ -1,4 +1,4 @@
-# Scene API (`xrspatial-scene`, 0.2)
+# Scene API (`xrspatial-scene`, 0.2 + pointer)
 
 Cards, images and text in the room, from ordinary Android code: no OpenGL, no C++, no lifecycle handling.
 Package `io.github.alexskuznetsov.xrspatial.scene`. Built on `xrspatial` (`XrSpatialSession`, `XrRenderer`);
@@ -29,8 +29,8 @@ The app module needs the setup from the README (RayNeo libraries, `useLegacyPack
 | Class | What it does |
 | --- | --- |
 | `SpatialHost.attach(activity, scene, config, listener)` | Makes the Activity a full-screen SurfaceView, keeps the display on, starts and stops the session with the Activity's lifecycle, window focus and surface. `host.session` is the underlying `XrSpatialSession`. |
-| `SpatialScene` | The list of nodes; `add`, `remove`, `clear`, `recenter()`. Thread-safe. `scene.renderer` is an `XrRenderer` if you run the session yourself. |
-| `SpatialPanel(view, widthMeters, placement, pixelsPerMeter = 1000f)` | Any Android `View` (inflated layout, `LinearLayout` with `TextView`s and `ImageView`s, ...) drawn into a texture. Call `update()` on the main thread after changing the view. No input yet. |
+| `SpatialScene` | The list of nodes; `add`, `remove`, `clear`, `recenter()`, `pointer` (see [Pointer](#pointer)). Thread-safe. `scene.renderer` is an `XrRenderer` if you run the session yourself. |
+| `SpatialPanel(view, widthMeters, placement, pixelsPerMeter = 1000f)` | Any Android `View` (inflated layout, `LinearLayout` with `TextView`s and `ImageView`s, ...) drawn into a texture. Call `update()` on the main thread after changing the view. `performClickAt(hit)` clicks a view under a pointer hit. |
 | `SpatialText(context, text, widthMeters, placement, textSizeMeters = 0.02f, color)` | A `TextView` with sizes in metres; set `text` on the main thread. |
 | `SpatialImage(bitmap, widthMeters, placement)` | A bitmap; `setBitmap()` to change it. Height follows the aspect ratio. |
 | `SpatialNode.visible`, `.opacity`, `.placement` | Change from any thread; applied on the next frame. |
@@ -55,6 +55,38 @@ X3 Pro runtime advertises no spatial anchor extension (only `XR_EXT_hand_trackin
 layout uses the runtime's eye views, so "in front" is the middle of what the wearer sees. A point straight
 along the head's -Z at 1.5 m would sit above the top edge of the image.
 
+## Pointer
+
+A pointer the scene draws over its content: a **dot** or a **ray**, from the centre of the view or from a pose
+the app supplies. The SDK only draws it and reports what it points at; what a tap, a swipe or a dwell does is
+the app's decision.
+
+```kotlin
+val pointer = SpatialPointer(PointerStyle.Dot())            // or PointerStyle.Ray()
+scene.pointer = pointer                                      // scene.pointer = null removes it
+pointer.enabled = false                                      // off: nothing drawn, hit = null; true: on again
+pointer.style = PointerStyle.Ray()                           // switch at any time
+pointer.listener = PointerListener { hit -> /* main thread, when the target node changes */ }
+
+override fun dispatchTouchEvent(e: MotionEvent): Boolean {  // the temple touchpad: ordinary touch events
+    if (e.actionMasked == MotionEvent.ACTION_UP) pointer.hit?.let { card.performClickAt(it) }
+    return true
+}
+```
+
+| Type | Description |
+| --- | --- |
+| `PointerStyle.Dot(sizeDegrees = 0.6f, color = WHITE, distanceWithoutHit = 1.5f)` | A round dot on the target, a fixed angular size, drawn at the target's depth (a dot drawn at a fixed depth doubles in stereo when looking at a card). Without a target it floats `distanceWithoutHit` metres ahead. |
+| `PointerStyle.Ray(widthMeters = 0.003f, color, maxLength = 3f, endDot = Dot(0.5f))` | A beam from the source to the target (or `maxLength` metres), optionally ending in a dot. |
+| `PointerSource.Gaze(rayOrigin = (0.1, -0.15, 0))` | The default. Points along the display axis, the centre of what the wearer sees (about 11° below the head's forward on the X3 Pro). `rayOrigin` (display frame, metres) only sets where a visible beam starts, since a beam from the eyes would be seen end-on. |
+| `PointerSource.Custom { pose }` | A LOCAL pose from the app every frame (render thread), e.g. from a tracked phone; the pointer runs along its −Z. Return null to hide it for that frame. |
+| `SpatialPointer.hit: PointerHit?` | The latest target: `node`, `point` (LOCAL), `distance`, `u`/`v` (0..1 from top-left) and `pixelX`/`pixelY` in the node's bitmap (a panel's view coordinates). Null when nothing is hit, when off, or before tracking. Any thread. |
+| `SpatialPanel.performClickAt(hit): View?` | Optional helper: `performClick()` on the deepest visible, enabled, clickable view under the hit, then redraw. Main thread. Panel views have no window, so touch events dispatched into them would not click. |
+
+Only visible nodes with content are hit; the nearest wins. Nodes are one-sided, so they are not hit from behind.
+The [`sample-pointer`](../sample-pointer) app shows a card with two buttons: tap clicks, swipe forward switches
+dot/ray, swipe back switches the pointer off and on.
+
 ## Designing for this display
 
 - **Small field of view**: about 24° × 18° per eye, 640 × 480 pixels. At 1.5 m that is roughly 0.64 m × 0.48 m.
@@ -75,5 +107,5 @@ along the head's -Z at 1.5 m would sit above the top edge of the image.
 
 ## Not in 0.2
 
-Input (gaze ray, clicks, touchpad), Compose content, anchors or persistence, depth sorting beyond
+Input handling beyond the pointer (gestures are the app's), Compose content, anchors or persistence, depth sorting beyond
 back-to-front per node, 3D models. See the roadmap in the README.

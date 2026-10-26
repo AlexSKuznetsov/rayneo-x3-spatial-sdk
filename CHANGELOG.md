@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Pointer API in `xrspatial-scene`: `SpatialScene.pointer = SpatialPointer(...)` draws a dot
+  (`PointerStyle.Dot`) or a ray (`PointerStyle.Ray`) from the centre of the view (`PointerSource.Gaze`) or an
+  app-supplied pose (`PointerSource.Custom`), switchable with `enabled`; `hit` / `PointerListener` report the
+  node, point and pixel it points at. `SpatialPanel.performClickAt(hit)` clicks the view there. New sample
+  `sample-pointer`. `xrspatial-core`: `Ray3`, `RectHit`, `Pose3.forwardRay()`.
+
 - New sample `sample-input`: logs every input event the Activity receives during an XR session. Run on the
   glasses: the temple touchpad arrives as ordinary touchscreen events; a long press takes focus away
   (see the runtime notes).

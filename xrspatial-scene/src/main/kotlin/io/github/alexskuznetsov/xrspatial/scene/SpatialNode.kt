@@ -54,8 +54,8 @@ class SpatialImage(bitmap: Bitmap, widthMeters: Float, placement: Placement = Pl
 /**
  * An ordinary Android [View] (any layout: TextView, ImageView, LinearLayout, ...) drawn into a texture and
  * shown [widthMeters] wide. The view is measured at `widthMeters * pixelsPerMeter` pixels wide and its own
- * height. It is not attached to a window and receives no input. Call [update] on the main thread after
- * changing the view.
+ * height. It is not attached to a window and receives no input itself (see [performClickAt] for clicks from a
+ * [SpatialPointer]). Call [update] on the main thread after changing the view.
  *
  * [pixelsPerMeter] 1000 matches the X3 Pro display (~640 px over ~24 degrees) at about 1.5 m; text of
  * 0.02 m (20 px) is comfortably readable there.
@@ -83,6 +83,33 @@ open class SpatialPanel(
         val bitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
         view.draw(Canvas(bitmap))
         show(bitmap)
+    }
+
+    /**
+     * Optional helper for apps that want ordinary click listeners: clicks the deepest visible, enabled, clickable
+     * view of this panel under [hit] with `performClick()` (so `OnClickListener`s and check boxes work), then
+     * redraws. Main thread. Returns the clicked view, or null when [hit] is not on this panel or nothing
+     * clickable is there.
+     *
+     * Touch events are not used: the panel's views have no window, and a detached view never runs the click
+     * that `onTouchEvent` queues.
+     */
+    fun performClickAt(hit: PointerHit): View? {
+        if (hit.node !== this) return null
+        val target = clickableAt(view, hit.pixelX, hit.pixelY) ?: return null
+        target.performClick()
+        update()
+        return target
+    }
+
+    private fun clickableAt(v: View, x: Float, y: Float): View? {
+        if (v.visibility != View.VISIBLE || x < 0f || y < 0f || x >= v.width || y >= v.height) return null
+        if (v is ViewGroup) for (i in v.childCount - 1 downTo 0) {
+            val child = v.getChildAt(i)
+            clickableAt(child, x + v.scrollX - child.left - child.translationX, y + v.scrollY - child.top - child.translationY)
+                ?.let { return it }
+        }
+        return if (v.isClickable && v.isEnabled) v else null
     }
 
     private companion object { const val MAX_HEIGHT_PX = 4096 }

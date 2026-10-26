@@ -44,6 +44,7 @@ presents frames inside `xrEndFrame` on the render thread's EGL window surface.
 | `xrspatial-scene/` | Android library: scene, host, nodes, placement (no native code) |
 | `sample/` | Cube app with its own `XrRenderer` |
 | `sample-scene/` | Maintenance card from an XML layout |
+| `sample-pointer/` | Card with buttons and a dot/ray pointer |
 | `sample-input/` | Input probe: logs every input event during an XR session |
 | `tests/native/` | Host tests of the C++ headers against a fake OpenXR runtime |
 | `tools/` | `run_native_tests.py` |

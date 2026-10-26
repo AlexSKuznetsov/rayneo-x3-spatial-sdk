@@ -18,6 +18,15 @@ internal object Mat4 {
         return out
     }
 
+    /** Model matrix with the given (unnormalised) axes as columns: maps the unit quad onto any parallelogram. */
+    fun basis(x: Vector3, y: Vector3, z: Vector3, position: Vector3, out: FloatArray = FloatArray(16)): FloatArray {
+        out[0] = x.x; out[1] = x.y; out[2] = x.z; out[3] = 0f
+        out[4] = y.x; out[5] = y.y; out[6] = y.z; out[7] = 0f
+        out[8] = z.x; out[9] = z.y; out[10] = z.z; out[11] = 0f
+        out[12] = position.x; out[13] = position.y; out[14] = position.z; out[15] = 1f
+        return out
+    }
+
     fun multiply(a: FloatArray, b: FloatArray, out: FloatArray = FloatArray(16)): FloatArray {
         for (c in 0 until 4) for (r in 0 until 4) {
             var sum = 0f

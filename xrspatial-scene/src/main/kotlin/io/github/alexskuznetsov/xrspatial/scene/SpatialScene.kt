@@ -1,13 +1,20 @@
 package io.github.alexskuznetsov.xrspatial.scene
 
+import android.graphics.Color
 import android.opengl.GLES30
 import android.opengl.Matrix
+import android.os.Handler
+import android.os.Looper
 import io.github.alexskuznetsov.xrspatial.EyeFrame
+import io.github.alexskuznetsov.xrspatial.Pose3
+import io.github.alexskuznetsov.xrspatial.Vector3
 import io.github.alexskuznetsov.xrspatial.XrRenderer
 import io.github.alexskuznetsov.xrspatial.pose
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.math.pow
+import kotlin.math.tan
 
 /**
  * The content of a spatial app: a list of [SpatialNode]s drawn for both eyes every frame. Add and remove
@@ -22,6 +29,12 @@ class SpatialScene {
     fun <T : SpatialNode> add(node: T): T = node.also { nodes.addIfAbsent(it) }
     fun remove(node: SpatialNode) { nodes.remove(node) }
     fun clear() = nodes.clear()
+
+    /**
+     * The pointer drawn over the scene, or null for none. Set, replace or remove it at any time; switch it off and
+     * on with [SpatialPointer.enabled].
+     */
+    @Volatile var pointer: SpatialPointer? = null
 
     /** Places all [Placement.InFrontOfUser] nodes in front of the wearer again on the next frame. */
     fun recenter() { recenterRequested = true }
@@ -39,11 +52,24 @@ class SpatialScene {
         private var buffer = 0
         private var mvpLocation = 0
         private var opacityLocation = 0
+        private var solid = 0
+        private var solidMvp = 0
+        private var solidColor = 0
+        private var solidShape = 0
+        private val main = Handler(Looper.getMainLooper())
+        private var cast: PointerCast.Result? = null
+        private var castPointer: SpatialPointer? = null
+        private var notifiedTarget: SpatialQuad? = null
+        private var notifiedPointer: SpatialPointer? = null
 
         override fun onGlReady() {
             program = link()
             mvpLocation = GLES30.glGetUniformLocation(program, "mvp")
             opacityLocation = GLES30.glGetUniformLocation(program, "opacity")
+            solid = link(SOLID_FRAGMENT_SHADER)
+            solidMvp = GLES30.glGetUniformLocation(solid, "mvp")
+            solidColor = GLES30.glGetUniformLocation(solid, "color")
+            solidShape = GLES30.glGetUniformLocation(solid, "shape")
             // Unit quad in x/y, front +Z, counter-clockwise; texture row 0 (bitmap top) at y = +0.5.
             val quad = floatArrayOf(
                 -0.5f, -0.5f, 0f, 1f, 0.5f, -0.5f, 1f, 1f, 0.5f, 0.5f, 1f, 0f,
@@ -71,7 +97,10 @@ class SpatialScene {
                 .filter { it.visible && it.opacity > 0f && it.content != null && it.widthMeters > 0f }
                 .map { it to layout.poseOf(it, it.placement) }
                 .sortedByDescending { (_, pose) -> (pose.position - eyePosition).length }  // back to front
-            if (eye.eye == 0) dropUnused()
+            if (eye.eye == 0) {
+                dropUnused()
+                castPointer(drawn)
+            }
 
             GLES30.glUseProgram(program)
             GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, buffer)
@@ -96,6 +125,7 @@ class SpatialScene {
                 GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 6)
             }
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
+            drawPointer(eyePosition)
             GLES30.glDisable(GLES30.GL_BLEND)
             GLES30.glDisable(GLES30.GL_CULL_FACE)
             GLES30.glDepthMask(true)
@@ -111,8 +141,94 @@ class SpatialScene {
             textures.clear()
             if (buffer != 0) GLES30.glDeleteBuffers(1, intArrayOf(buffer), 0)
             if (program != 0) GLES30.glDeleteProgram(program)
+            if (solid != 0) GLES30.glDeleteProgram(solid)
             buffer = 0
             program = 0
+            solid = 0
+            cast = null
+        }
+
+        // Once per frame (left eye): what the pointer hits, published to SpatialPointer.hit and, when the target
+        // node changes, to its listener on the main thread.
+        private fun castPointer(drawn: List<Pair<SpatialQuad, Pose3>>) {
+            val p = pointer?.takeIf { it.enabled }
+            cast = p?.let { pointer ->
+                val targets = drawn.map { (node, pose) -> PointerCast.Target(node, pose, node.widthMeters, node.heightMeters) }
+                runCatching { PointerCast.cast(pointer.source, pointer.style, layout.display, targets) }.getOrNull()
+            }
+            castPointer = p
+            val result = cast
+            val node = result?.target?.key as? SpatialQuad
+            val hit = result?.hit
+            val published = if (node != null && hit != null) {
+                val bitmap = node.content
+                PointerHit(node, hit.point, hit.distance, hit.u, hit.v,
+                    hit.u * (bitmap?.width ?: 0), hit.v * (bitmap?.height ?: 0))
+            } else null
+            p?.hit = published
+            if (node !== notifiedTarget || p !== notifiedPointer) {
+                val previous = notifiedPointer
+                val previousTarget = notifiedTarget
+                notifiedTarget = node
+                notifiedPointer = p
+                // A pointer that was switched off or replaced while on a target hears that it has none now.
+                if (previous != null && previous !== p && previousTarget != null)
+                    previous.listener?.let { l -> main.post { l.onTargetChanged(null) } }
+                p?.listener?.let { l -> main.post { l.onTargetChanged(published) } }
+            }
+        }
+
+        // The pointer over everything (no depth test): a beam and/or a dot, camera-facing for this eye.
+        private fun drawPointer(eyePosition: Vector3) {
+            val result = cast ?: return
+            val style = castPointer?.style ?: return
+            GLES30.glUseProgram(solid)
+            GLES30.glDisable(GLES30.GL_DEPTH_TEST)
+            GLES30.glDisable(GLES30.GL_CULL_FACE)
+            val dot = when (style) {
+                is PointerStyle.Dot -> style
+                is PointerStyle.Ray -> {
+                    drawBeam(result.beamStart, result.end, style.widthMeters, style.color, eyePosition)
+                    style.endDot
+                }
+            }
+            if (dot != null) drawDot(result.end, dot, eyePosition)
+            GLES30.glUseProgram(program)
+        }
+
+        private fun drawBeam(a: Vector3, b: Vector3, width: Float, color: Int, eyePosition: Vector3) {
+            val along = b - a
+            if (along.length < 1e-4f) return
+            val middle = (a + b) * 0.5f
+            val side = (along cross (eyePosition - middle)).normalized() * width
+            draw(Mat4.basis(along, side, (along cross side).normalized(), middle, model), color, 0f)
+        }
+
+        private fun drawDot(at: Vector3, dot: PointerStyle.Dot, eyePosition: Vector3) {
+            val toEye = eyePosition - at
+            val distance = toEye.length
+            if (distance < 1e-3f) return
+            val size = 2f * distance * tan(Math.toRadians(dot.sizeDegrees / 2.0)).toFloat()
+            val z = toEye * (1f / distance)
+            val x = (Vector3.UP cross z).let { if (it.length < 1e-3f) Vector3.RIGHT else it.normalized() }
+            val y = z cross x
+            draw(Mat4.basis(x * size, y * size, z, at, model), dot.color, 1f)
+        }
+
+        private fun draw(modelMatrix: FloatArray, color: Int, shape: Float) {
+            Matrix.multiplyMM(mvp, 0, viewProjection, 0, modelMatrix, 0)
+            GLES30.glUniformMatrix4fv(solidMvp, 1, false, mvp, 0)
+            // The framebuffer is sRGB: pass the colour linear and premultiplied, like the decoded bitmaps.
+            val alpha = Color.alpha(color) / 255f
+            GLES30.glUniform4f(solidColor, linear(Color.red(color)) * alpha, linear(Color.green(color)) * alpha,
+                linear(Color.blue(color)) * alpha, alpha)
+            GLES30.glUniform1f(solidShape, shape)
+            GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 6)
+        }
+
+        private fun linear(channel: Int): Float {
+            val c = channel / 255f
+            return if (c <= 0.04045f) c / 12.92f else ((c + 0.055f) / 1.055f).pow(2.4f)
         }
 
         // Uploads the node's bitmap when it is new or changed. The swapchain is sRGB, so the texture is too:
@@ -150,7 +266,7 @@ class SpatialScene {
             }
         }
 
-        private fun link(): Int {
+        private fun link(fragmentShader: String = FRAGMENT_SHADER): Int {
             fun compile(type: Int, source: String) = GLES30.glCreateShader(type).also { shader ->
                 GLES30.glShaderSource(shader, source)
                 GLES30.glCompileShader(shader)
@@ -159,7 +275,7 @@ class SpatialScene {
                 check(ok[0] != 0) { "shader: " + GLES30.glGetShaderInfoLog(shader) }
             }
             val vs = compile(GLES30.GL_VERTEX_SHADER, VERTEX_SHADER)
-            val fs = compile(GLES30.GL_FRAGMENT_SHADER, FRAGMENT_SHADER)
+            val fs = compile(GLES30.GL_FRAGMENT_SHADER, fragmentShader)
             val p = GLES30.glCreateProgram()
             GLES30.glAttachShader(p, vs)
             GLES30.glAttachShader(p, fs)
@@ -188,6 +304,19 @@ uniform float opacity;
 in vec2 vUv;
 out vec4 outColor;
 void main() { outColor = texture(tex, vUv) * opacity; }
+"""
+        // Pointer: shape 0 = beam (soft across its width), 1 = round dot; colour is premultiplied.
+        const val SOLID_FRAGMENT_SHADER = """#version 300 es
+precision mediump float;
+uniform vec4 color;
+uniform float shape;
+in vec2 vUv;
+out vec4 outColor;
+void main() {
+    vec2 d = vUv * 2.0 - 1.0;
+    float a = shape > 0.5 ? clamp((1.0 - length(d)) * 6.0, 0.0, 1.0) : clamp((1.0 - abs(d.y)) * 3.0, 0.0, 1.0);
+    outColor = color * a;
+}
 """
     }
 }
