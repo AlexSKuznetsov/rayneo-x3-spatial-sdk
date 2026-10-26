@@ -1,4 +1,4 @@
-# Scene API (`xrspatial-scene`, 0.2 + pointer)
+# Scene API (`xrspatial-scene`, 0.3)
 
 Cards, images and text in the room, from ordinary Android code: no OpenGL, no C++, no lifecycle handling.
 Package `io.github.alexskuznetsov.xrspatial.scene`. Built on `xrspatial` (`XrSpatialSession`, `XrRenderer`);
@@ -106,7 +106,7 @@ the dot does not double, taps click the aimed button, the pointer switches off a
   each time) and uploaded again from the nodes' bitmaps; textures of removed nodes are deleted.
 - Do not change or recycle a bitmap after passing it to a node.
 
-## Not in 0.2
+## Not in 0.3
 
 Input handling beyond the pointer (gestures are the app's), Compose content, anchors or persistence, depth sorting beyond
 back-to-front per node, 3D models. See the roadmap in the README.

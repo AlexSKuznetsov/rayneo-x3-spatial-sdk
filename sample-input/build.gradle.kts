@@ -11,7 +11,7 @@ android {
         minSdk = 30
         targetSdk = 35
         versionCode = 1
-        versionName = "0.3.0-probe"
+        versionName = "0.3.0"
         ndk { abiFilters += "arm64-v8a" }
     }
     // The RayNeo SDK loads its native libraries from nativeLibraryDir, so they must be extracted.
