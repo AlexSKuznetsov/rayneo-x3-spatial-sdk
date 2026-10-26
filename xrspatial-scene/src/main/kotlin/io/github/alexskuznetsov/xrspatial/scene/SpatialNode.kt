@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.util.TypedValue
 import android.view.View
+import android.view.ViewGroup
 import android.widget.TextView
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -70,6 +71,11 @@ open class SpatialPanel(
     /** Re-draws [view] into the panel's texture. Main thread. */
     fun update() {
         val widthPx = max(1, (widthMeters * pixelsPerMeter).roundToInt())
+        // A View without a parent has no LayoutParams, and e.g. TextView.setText then fails in
+        // checkForRelayout (seen on the glasses). Give it the panel's width.
+        val params = view.layoutParams
+        if (params == null) view.layoutParams = ViewGroup.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
+        else if (params.width != widthPx) { params.width = widthPx; view.layoutParams = params }
         view.measure(View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(MAX_HEIGHT_PX, View.MeasureSpec.AT_MOST))
         val heightPx = view.measuredHeight.coerceIn(1, MAX_HEIGHT_PX)
