@@ -27,7 +27,8 @@ import java.util.concurrent.Executors
  * session; the session then goes to [TrackingState.PAUSED] instead of reporting an error, and starts again
  * by itself (new [PoseSample.sessionEpoch], new warm-up) when focus returns.
  *
- * Threading: call [start], [stop] and [onWindowFocusChanged] on the main thread. Call [stop] from
+ * Threading: call [start] on the main thread; [stop] and [onWindowFocusChanged] may be called from any thread
+ * and are applied on the main thread. Call [stop] from
  * `Activity.onPause`. [surfaceView] must be the Activity's visible SurfaceView with a valid surface: the
  * runtime shows frames on it. One session at a time per process.
  */
@@ -62,10 +63,9 @@ class XrSpatialSession(
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "xrspatial-bind").apply { isDaemon = true } }
     private val facts = linkedMapOf<String, String>()
     @Volatile private var latest: PoseSample? = null
-    @Volatile private var state = TrackingState.STOPPED
-    @Volatile private var nativeRunning = false
-    private var stopRequested = false
-    private var focusLostInRun = false
+    @Volatile private var confidence = TrackingConfidence.NONE
+    @Volatile private var jumps = 0
+    private val machine = SessionStateMachine()
     private var pausedListener: PoseListener? = null
     private var client: FFalconXRClient? = null
     private var bound = false
@@ -82,54 +82,69 @@ class XrSpatialSession(
 
     override fun start(listener: PoseListener): Result<Unit> {
         if (Looper.myLooper() != Looper.getMainLooper()) return Result.failure(SpatialError.SessionUnsupported("start:notMainThread"))
-        if (state != TrackingState.STOPPED) return Result.failure(SpatialError.AlreadyRunning())
-        return begin(listener)
+        if (machine.state != TrackingState.STOPPED) return Result.failure(SpatialError.AlreadyRunning())
+        return begin(listener, resume = false)
     }
 
-    private fun begin(listener: PoseListener): Result<Unit> {
+    // A start (from STOPPED) or a resume (from PAUSED): the RayNeo bind runs on a worker; its result is applied
+    // on the main thread only if this attempt is still the current one.
+    private fun begin(listener: PoseListener, resume: Boolean): Result<Unit> {
         if (!surfaceView.holder.surface.isValid) return Result.failure(SpatialError.SessionUnsupported("surfaceInvalid"))
         val sdk = runCatching { FxrApi.Get() as? FFalconXRClient }.getOrNull()
             ?: return Result.failure(SpatialError.VendorInitializationFailed("FxrApi.Get"))
         val initialized = runCatching { sdk.initAndroid(activity) }.getOrDefault(false)
         if (!initialized) return Result.failure(SpatialError.VendorInitializationFailed("initAndroid"))
+        val generation = machine.begin(resume)
+        if (generation == null) {
+            runCatching { sdk.uninitAndroid() }
+            return Result.failure(SpatialError.AlreadyRunning())
+        }
         client = sdk
-        stopRequested = false
-        focusLostInRun = false
         latest = null
         epoch++
-        setState(listener, TrackingState.STARTING)
+        notify(listener)
         worker.execute {
             val value = runCatching { sdk.bindService() }.getOrDefault(false)
-            main.post { afterBind(sdk, value, listener) }
+            main.post { afterBind(generation, sdk, value, listener) }
         }
         return Result.success(Unit)
     }
 
+    /** Ends the session asynchronously ([PoseListener.onStopped] follows). From any thread; applied on the main thread. */
     override fun stop() {
-        if (state == TrackingState.STOPPED) return
-        if (state == TrackingState.PAUSED) {
-            val listener = pausedListener ?: return
-            pausedListener = null
-            setState(listener, TrackingState.STOPPED)
-            listener.onStopped("STOPPED")
-            return
+        if (Looper.myLooper() != Looper.getMainLooper()) { main.post { stop() }; return }
+        when (machine.stop()) {
+            SessionStateMachine.Stop.NONE -> Unit
+            SessionStateMachine.Stop.NOW -> {
+                val listener = pausedListener ?: return
+                pausedListener = null
+                notify(listener)
+                listener.onStopped("STOPPED")
+            }
+            SessionStateMachine.Stop.REQUESTED -> if (machine.nativeRunning) XrSpatialNative.cancel()
         }
-        stopRequested = true
-        if (nativeRunning) XrSpatialNative.cancel()
     }
 
     override fun latestUsable(): PoseSample? = latest
 
-    override fun diagnostics(): Map<String, String> = facts + mapOf("state" to state.name, "sessionEpoch" to epoch.toString())
+    /**
+     * How far world-locked positions can be trusted now: NONE without a usable pose, DEGRADED for 2 s after a
+     * position jump (the shifted frame is accepted after the warm-up, so content may appear offset), else NORMAL.
+     * Changes also go to [PoseListener.onConfidenceChanged]. Any thread.
+     */
+    fun confidence(): TrackingConfidence = confidence
+
+    override fun diagnostics(): Map<String, String> = facts + mapOf("state" to machine.state.name, "confidence" to confidence.name, "jumps" to jumps.toString(), "sessionEpoch" to epoch.toString())
 
     /**
      * Forward from `Activity.onWindowFocusChanged`: the RayNeo runtime tracks the window focus, and a paused
-     * session resumes here.
+     * session resumes here. From any thread; applied on the main thread.
      */
     fun onWindowFocusChanged(hasFocus: Boolean) {
-        if (!hasFocus && nativeRunning) focusLostInRun = true
-        if (bound && nativeRunning) runCatching { client?.setWindowFocus(hasFocus) }
-        if (hasFocus && state == TrackingState.PAUSED) resume()
+        if (Looper.myLooper() != Looper.getMainLooper()) { main.post { onWindowFocusChanged(hasFocus) }; return }
+        val resumeNow = machine.focusChanged(hasFocus)
+        if (bound && machine.nativeRunning) runCatching { client?.setWindowFocus(hasFocus) }
+        if (resumeNow) resume()
     }
 
     /**
@@ -145,10 +160,16 @@ class XrSpatialSession(
 
     private fun pushHud() = runCatching { XrSpatialNative.setHud(hudTop, hudBottom, hudCentre) }
 
-    private fun afterBind(sdk: FFalconXRClient, value: Boolean, listener: PoseListener) {
-        bound = value
-        if (!value) { finish(sdk, listener, SpatialError.VendorInitializationFailed("bindService"), "BIND_FAILED"); return }
-        if (stopRequested) { finish(sdk, listener, null, "STOPPED_BEFORE_SESSION"); return }
+    private fun afterBind(generation: Int, sdk: FFalconXRClient, value: Boolean, listener: PoseListener) {
+        when (machine.bound(generation, value)) {
+            SessionStateMachine.Bind.STALE -> return  // a newer attempt owns the client now
+            SessionStateMachine.Bind.FAILED -> {
+                bound = false
+                finish(sdk, listener, SpatialError.VendorInitializationFailed("bindService"), "BIND_FAILED"); return
+            }
+            SessionStateMachine.Bind.CANCELLED -> { bound = true; finish(sdk, listener, null, "STOPPED_BEFORE_SESSION"); return }
+            SessionStateMachine.Bind.RUN -> bound = true
+        }
         val surface = surfaceView.holder.surface
         if (!surface.isValid) { finish(sdk, listener, SpatialError.SessionUnsupported("surfaceInvalid"), "SURFACE_INVALID"); return }
         try {
@@ -161,6 +182,8 @@ class XrSpatialSession(
             finish(sdk, listener, SpatialError.LoaderInitFailed("windowOrLoader:${e.javaClass.simpleName}"), "LOADER_FAILED"); return
         }
         val gate = WarmupGate()
+        val tracker = ConfidenceTracker()
+        confidence = TrackingConfidence.NONE
         val session = epoch
         var lastSample: PoseSample? = null
         var lastQuality: SampleQuality? = null
@@ -174,6 +197,8 @@ class XrSpatialSession(
                                   px: Float, py: Float, pz: Float, qx: Float, qy: Float, qz: Float, qw: Float) {
                 val sample = PoseSample(session, index, xrTime, hostReceiptNs, flags, px, py, pz, qx, qy, qz, qw)
                 val quality = gate.classify(sample)
+                val nextConfidence = tracker.update(sample, quality)
+                jumps = tracker.jumps
                 lastSample = sample
                 if (quality == SampleQuality.USABLE) latest = sample
                 if (config.waitingHud && (quality == SampleQuality.USABLE) != (lastQuality == SampleQuality.USABLE)) {
@@ -182,6 +207,10 @@ class XrSpatialSession(
                 }
                 lastQuality = quality
                 listener.onSample(sample, quality)
+                if (nextConfidence != confidence) {
+                    confidence = nextConfidence
+                    listener.onConfidenceChanged(nextConfidence)
+                }
             }
             override fun onDrawEye(eye: Int, view: FloatArray, projection: FloatArray, width: Int, height: Int) {
                 val head = lastSample ?: return
@@ -198,20 +227,21 @@ class XrSpatialSession(
             }
         }
         XrSpatialNative.resetCancel()
-        nativeRunning = true
-        setState(listener, TrackingState.RUNNING)
-        if (stopRequested) XrSpatialNative.cancel()
+        machine.nativeStarted(generation)
+        notify(listener)
+        if (machine.stopRequested) XrSpatialNative.cancel()
         Thread({
             val result = runCatching { XrSpatialNative.run(activity, activity.applicationContext, surface, config.appName, config.nearZ, config.farZ, config.handTracking) }
             main.post {
-                nativeRunning = false
                 val run = result.getOrNull()?.let { parse(it) }
-                if (run != null && run.pausedByFocusLoss(focusLostInRun, stopRequested)) {
-                    pause(sdk, listener)
-                    return@post
+                when (machine.nativeEnded(generation, run)) {
+                    SessionStateMachine.End.STALE -> Unit
+                    SessionStateMachine.End.PAUSE -> pause(sdk, listener)
+                    SessionStateMachine.End.FINISH -> {
+                        val error = run?.error() ?: result.exceptionOrNull()?.let { SpatialError.SessionLost("run:${it.javaClass.simpleName}") }
+                        finish(sdk, listener, error, if (error == null) "STOPPED" else "ERROR")
+                    }
                 }
-                val error = run?.error() ?: result.exceptionOrNull()?.let { SpatialError.SessionLost("run:${it.javaClass.simpleName}") }
-                finish(sdk, listener, error, if (error == null) "STOPPED" else "ERROR")
             }
         }, "xrspatial-render").start()
     }
@@ -237,19 +267,23 @@ class XrSpatialSession(
     }
 
     private fun finish(sdk: FFalconXRClient, listener: PoseListener, error: SpatialError?, reason: String) {
-        setState(listener, TrackingState.STOPPING)
+        machine.stopping()
+        notify(listener)
         release(sdk)
-        setState(listener, TrackingState.STOPPED)
+        machine.stopped()
+        notify(listener)
         if (error != null) listener.onError(error)
         listener.onStopped(reason)
     }
 
     // The runtime ended the session on focus loss: release everything like a stop, but keep the listener.
     private fun pause(sdk: FFalconXRClient, listener: PoseListener) {
-        setState(listener, TrackingState.STOPPING)
+        machine.stopping()
+        notify(listener)
         release(sdk)
         pausedListener = listener
-        setState(listener, TrackingState.PAUSED)
+        machine.paused()
+        notify(listener)
         if (activity.hasWindowFocus()) resume()
     }
 
@@ -257,8 +291,9 @@ class XrSpatialSession(
         val listener = pausedListener ?: return
         if (!surfaceView.holder.surface.isValid) return  // stays paused; the next focus gain tries again
         pausedListener = null
-        begin(listener).onFailure { e ->
-            setState(listener, TrackingState.STOPPED)
+        begin(listener, resume = true).onFailure { e ->
+            machine.stop()  // PAUSED -> STOPPED
+            notify(listener)
             listener.onError(e as? SpatialError ?: SpatialError.SessionLost("resume:${e.javaClass.simpleName}"))
             listener.onStopped("RESUME_FAILED")
         }
@@ -271,12 +306,10 @@ class XrSpatialSession(
         runCatching { sdk.uninitAndroid() }
         client = null
         latest = null
+        confidence = TrackingConfidence.NONE
     }
 
-    private fun setState(listener: PoseListener, next: TrackingState) {
-        state = next
-        listener.onStateChanged(next)
-    }
+    private fun notify(listener: PoseListener) = listener.onStateChanged(machine.state)
 
     private companion object {
         const val WAITING = "WAITING FOR TRACKING"

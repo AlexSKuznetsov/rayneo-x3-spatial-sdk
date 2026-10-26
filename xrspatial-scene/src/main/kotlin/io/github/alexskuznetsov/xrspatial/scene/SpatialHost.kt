@@ -12,6 +12,7 @@ import io.github.alexskuznetsov.xrspatial.PoseListener
 import io.github.alexskuznetsov.xrspatial.PoseSample
 import io.github.alexskuznetsov.xrspatial.SampleQuality
 import io.github.alexskuznetsov.xrspatial.SpatialError
+import io.github.alexskuznetsov.xrspatial.TrackingConfidence
 import io.github.alexskuznetsov.xrspatial.TrackingState
 import io.github.alexskuznetsov.xrspatial.XrSpatialSession
 
@@ -39,14 +40,15 @@ class SpatialHost private constructor(
     /** The underlying session, for [XrSpatialSession.diagnostics], HUD text or the latest pose. */
     val session = XrSpatialSession(activity, surfaceView, config)
 
-    private var resumed = false
-    private var surfaceReady = false
-    private var running = false
+    private val gate = HostGate(activity)
 
+    // Registered on the Activity itself (Activity.registerActivityLifecycleCallbacks), so only its own events
+    // arrive; the gate still ignores any other Activity.
     private val lifecycle = object : Application.ActivityLifecycleCallbacks {
-        override fun onActivityResumed(a: Activity) { resumed = true; maybeStart() }
-        override fun onActivityPaused(a: Activity) { resumed = false; session.stop() }
+        override fun onActivityResumed(a: Activity) { if (gate.onResumed(a)) maybeStart() }
+        override fun onActivityPaused(a: Activity) { if (gate.onPaused(a)) session.stop() }
         override fun onActivityDestroyed(a: Activity) {
+            if (!gate.isOwner(a)) return
             session.stop()
             activity.unregisterActivityLifecycleCallbacks(this)
         }
@@ -63,14 +65,16 @@ class SpatialHost private constructor(
 
     private val forward = object : PoseListener {
         override fun onSample(sample: PoseSample, quality: SampleQuality) { listener?.onSample(sample, quality) }
+        override fun onConfidenceChanged(confidence: TrackingConfidence) { listener?.onConfidenceChanged(confidence) }
         override fun onStateChanged(state: TrackingState) { listener?.onStateChanged(state) }
         override fun onError(error: SpatialError) {
             Log.e(TAG, "session error: ${error.message} operation=${error.operation} result=${error.resultCode}")
             listener?.onError(error)
         }
         override fun onStopped(reason: String) {
-            running = false
+            val restart = gate.onStopped(reason)
             listener?.onStopped(reason)
+            if (restart) maybeStart()  // e.g. resumed again while the previous session was still stopping
         }
     }
 
@@ -78,9 +82,9 @@ class SpatialHost private constructor(
         // The glasses switch the display off after ~30 s without touch input, which pauses the app.
         activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) { surfaceReady = true; maybeStart() }
+            override fun surfaceCreated(holder: SurfaceHolder) { gate.onSurface(true); maybeStart() }
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
-            override fun surfaceDestroyed(holder: SurfaceHolder) { surfaceReady = false; session.stop() }
+            override fun surfaceDestroyed(holder: SurfaceHolder) { gate.onSurface(false); session.stop() }
         })
         surfaceView.viewTreeObserver.addOnWindowFocusChangeListener(focus)
         activity.setContentView(surfaceView)
@@ -89,11 +93,10 @@ class SpatialHost private constructor(
 
     // The runtime needs a resumed, focused Activity with a valid surface.
     private fun maybeStart() {
-        if (running || !resumed || !surfaceReady || !activity.hasWindowFocus()) return
-        running = true
+        if (!gate.shouldStart(activity.hasWindowFocus())) return
         session.start(scene.renderer, forward).onFailure { error ->
             Log.e(TAG, "start failed: $error")
-            running = false
+            gate.onStartFailed()
         }
     }
 

@@ -60,6 +60,36 @@ class WarmupGateTest {
         assertEquals(SampleQuality.USABLE, q.last())
     }
 
+    @Test fun persistentOffsetAfterJumpIsAcceptedAfterTheWindowAndFlaggedDegraded() {
+        // Device-like: ~0.4 m position jump that stays (seen after a ~90 deg head turn). The gate recovers by
+        // design, so the shifted frame becomes USABLE after 300 ms; ConfidenceTracker keeps it DEGRADED for 2 s.
+        val before = List(40) { pose(it * frameNs).copy(px = it * 1e-4f) }
+        val after = List(150) { pose((40 + it) * frameNs).copy(px = 0.4f + it * 1e-4f) }
+        val gate = WarmupGate()
+        val tracker = ConfidenceTracker()
+        val samples = before + after
+        val q = samples.map { gate.classify(it) }
+        val c = samples.zip(q).map { (s, quality) -> tracker.update(s, quality) }
+        assertEquals(SampleQuality.USABLE, q[39])
+        assertEquals(TrackingConfidence.NORMAL, c[39])
+        assertEquals(SampleQuality.JUMP, q[40])
+        assertTrue(q.subList(41, 58).all { it == SampleQuality.WARMING_UP })  // no content for ~300 ms
+        assertEquals(SampleQuality.USABLE, q[59])                              // offset accepted
+        assertEquals(0.4f, samples[59].px, 0.01f)
+        assertTrue(c.subList(40, 40 + 119).all { it == TrackingConfidence.DEGRADED })  // 2 s after the jump
+        assertEquals(TrackingConfidence.NORMAL, c.last())
+        assertEquals(1, tracker.jumps)
+    }
+
+    @Test fun confidenceIsNoneWhileWarmingUp() {
+        val tracker = ConfidenceTracker()
+        val s = pose(0)
+        assertEquals(TrackingConfidence.NONE, tracker.update(s, SampleQuality.WARMING_UP))
+        assertEquals(TrackingConfidence.NONE, tracker.update(s, SampleQuality.NON_FINITE))
+        assertEquals(TrackingConfidence.NORMAL, tracker.update(s, SampleQuality.USABLE))
+        assertEquals(null, tracker.lastJumpNs)
+    }
+
     @Test fun incompleteFlagsAreNeverUsable() {
         val q = run(WarmupGate(), List(40) { pose(it * frameNs, x = it * 1e-4f, flags = 7L) })
         assertTrue(q.all { it == SampleQuality.FLAGS_INCOMPLETE })

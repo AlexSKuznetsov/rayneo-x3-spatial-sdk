@@ -29,17 +29,17 @@ abstract class SpatialNode internal constructor(placement: Placement) {
  */
 open class SpatialQuad internal constructor(placement: Placement, widthMeters: Float) : SpatialNode(placement) {
     @Volatile var widthMeters: Float = widthMeters
-    val heightMeters: Float get() = content?.let { widthMeters * it.height / it.width } ?: 0f
+    val heightMeters: Float get() = content.current?.value?.let { widthMeters * it.height / it.width } ?: 0f
 
-    @Volatile internal var content: Bitmap? = null
-        private set
-    @Volatile internal var version = 0
-        private set
+    /** The bitmap and its version, always read together by the renderer. */
+    internal val content = ContentSlot<Bitmap>()
 
-    /** Shows [bitmap] from the next frame. The scene keeps a reference: do not change or recycle it afterwards. */
+    /**
+     * Shows [bitmap] from the next frame. From any thread; the last call wins. The scene keeps a reference: do not
+     * change or recycle it afterwards.
+     */
     protected fun show(bitmap: Bitmap) {
-        content = if (bitmap.config == Bitmap.Config.ARGB_8888) bitmap else bitmap.copy(Bitmap.Config.ARGB_8888, false)
-        version++
+        content.publish(if (bitmap.config == Bitmap.Config.ARGB_8888) bitmap else bitmap.copy(Bitmap.Config.ARGB_8888, false))
     }
 }
 

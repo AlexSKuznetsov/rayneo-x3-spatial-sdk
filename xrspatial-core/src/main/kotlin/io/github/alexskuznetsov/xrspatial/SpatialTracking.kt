@@ -26,6 +26,8 @@ interface SpatialTracking {
 /** Callbacks arrive on the implementation's tracking thread; keep them short. */
 interface PoseListener {
     fun onSample(sample: PoseSample, quality: SampleQuality)
+    /** The [TrackingConfidence] changed (for example DEGRADED after a position jump). */
+    fun onConfidenceChanged(confidence: TrackingConfidence) {}
     fun onStateChanged(state: TrackingState) {}
     fun onError(error: SpatialError) {}
     fun onStopped(reason: String) {}

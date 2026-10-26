@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Lifecycle hardening (from a code review): `XrSpatialSession` runs a JVM-tested state machine where every
+  start or resume is a numbered attempt and stale bind or native results are ignored; `stop()` and
+  `onWindowFocusChanged()` may be called from any thread. `SpatialHost` ignores other Activities' events and
+  starts again by itself after a normal stop while its Activity is still resumed and focused (a quick pause and
+  resume could leave the scene stopped).
+- `SpatialQuad` publishes its bitmap and version as one snapshot; the renderer draws each node from a single
+  snapshot per frame (size, texture and pointer pixels always match).
+- `TrackingConfidence` (`NONE`, `NORMAL`, `DEGRADED` for 2 s after a position jump) via
+  `XrSpatialSession.confidence()` and `PoseListener.onConfidenceChanged`; `ConfidenceTracker` in the core.
+
 - Pointer API in `xrspatial-scene`: `SpatialScene.pointer = SpatialPointer(...)` draws a dot
   (`PointerStyle.Dot`) or a ray (`PointerStyle.Ray`) from the centre of the view (`PointerSource.Gaze`) or an
   app-supplied pose (`PointerSource.Custom`), switchable with `enabled`; `hit` / `PointerListener` report the

@@ -1,5 +1,6 @@
 package io.github.alexskuznetsov.xrspatial.scene
 
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.opengl.GLES30
 import android.opengl.Matrix
@@ -45,6 +46,12 @@ class SpatialScene {
     private inner class SceneRenderer : XrRenderer {
         private val layout = SceneLayout()
         private val textures = HashMap<SpatialQuad, IntArray>()  // node -> [texture id, uploaded version]
+
+        /** One node as drawn this frame: a single content snapshot, so size and texture always match. */
+        private inner class Drawn(val node: SpatialQuad, val frame: Versioned<Bitmap>, val pose: Pose3) {
+            val width = node.widthMeters
+            val height = width * frame.value.height / frame.value.width
+        }
         private val viewProjection = FloatArray(16)
         private val model = FloatArray(16)
         private val mvp = FloatArray(16)
@@ -94,9 +101,9 @@ class SpatialScene {
 
             val eyePosition = Mat4.eyePoseFromView(eye.view).position
             val drawn = nodes.filterIsInstance<SpatialQuad>()
-                .filter { it.visible && it.opacity > 0f && it.content != null && it.widthMeters > 0f }
-                .map { it to layout.poseOf(it, it.placement) }
-                .sortedByDescending { (_, pose) -> (pose.position - eyePosition).length }  // back to front
+                .filter { it.visible && it.opacity > 0f && it.widthMeters > 0f }
+                .mapNotNull { node -> node.content.current?.let { Drawn(node, it, layout.poseOf(node, node.placement)) } }
+                .sortedByDescending { (it.pose.position - eyePosition).length }  // back to front
             if (eye.eye == 0) {
                 dropUnused()
                 castPointer(drawn)
@@ -115,9 +122,10 @@ class SpatialScene {
             GLES30.glEnable(GLES30.GL_BLEND)
             GLES30.glBlendFunc(GLES30.GL_ONE, GLES30.GL_ONE_MINUS_SRC_ALPHA)  // Android bitmaps are premultiplied
             GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-            for ((node, pose) in drawn) {
-                val texture = texture(node) ?: continue
-                Mat4.pose(pose, node.widthMeters, node.heightMeters, 1f, model)
+            for (d in drawn) {
+                val node = d.node
+                val texture = texture(node, d.frame)
+                Mat4.pose(d.pose, d.width, d.height, 1f, model)
                 Matrix.multiplyMM(mvp, 0, viewProjection, 0, model, 0)
                 GLES30.glUniformMatrix4fv(mvpLocation, 1, false, mvp, 0)
                 GLES30.glUniform1f(opacityLocation, node.opacity.coerceIn(0f, 1f))
@@ -150,20 +158,20 @@ class SpatialScene {
 
         // Once per frame (left eye): what the pointer hits, published to SpatialPointer.hit and, when the target
         // node changes, to its listener on the main thread.
-        private fun castPointer(drawn: List<Pair<SpatialQuad, Pose3>>) {
+        private fun castPointer(drawn: List<Drawn>) {
             val p = pointer?.takeIf { it.enabled }
             cast = p?.let { pointer ->
-                val targets = drawn.map { (node, pose) -> PointerCast.Target(node, pose, node.widthMeters, node.heightMeters) }
+                val targets = drawn.map { d -> PointerCast.Target(d, d.pose, d.width, d.height) }
                 runCatching { PointerCast.cast(pointer.source, pointer.style, layout.display, targets) }.getOrNull()
             }
             castPointer = p
             val result = cast
-            val node = result?.target?.key as? SpatialQuad
+            val target = result?.target?.key as? Drawn
+            val node = target?.node
             val hit = result?.hit
-            val published = if (node != null && hit != null) {
-                val bitmap = node.content
-                PointerHit(node, hit.point, hit.distance, hit.u, hit.v,
-                    hit.u * (bitmap?.width ?: 0), hit.v * (bitmap?.height ?: 0))
+            val published = if (target != null && node != null && hit != null) {
+                val bitmap = target.frame.value
+                PointerHit(node, hit.point, hit.distance, hit.u, hit.v, hit.u * bitmap.width, hit.v * bitmap.height)
             } else null
             p?.hit = published
             if (node !== notifiedTarget || p !== notifiedPointer) {
@@ -233,9 +241,9 @@ class SpatialScene {
 
         // Uploads the node's bitmap when it is new or changed. The swapchain is sRGB, so the texture is too:
         // sampling decodes to linear and the framebuffer encodes back, keeping the bitmap's colours.
-        private fun texture(node: SpatialQuad): Int? {
-            val version = node.version
-            val bitmap = node.content ?: return null
+        private fun texture(node: SpatialQuad, frame: Versioned<Bitmap>): Int {
+            val version = frame.version
+            val bitmap = frame.value
             val entry = textures.getOrPut(node) {
                 IntArray(2).also { GLES30.glGenTextures(1, it, 0); it[1] = version - 1 }
             }

@@ -23,11 +23,12 @@ class XrSpatialSession(activity: Activity, surfaceView: SurfaceView, config: Con
 | `handListener: HandListener?` | With `handTracking` on and supported: both hands every frame (`HandSample`: raw locate result, `active`, palm and index-tip flags and positions in LOCAL), on the render thread. |
 | `start(renderer: XrRenderer, listener: PoseListener): Result<Unit>` | Sets `renderer` and starts. |
 | `start(listener: PoseListener): Result<Unit>` | Starts a session and returns at once. Must be called on the main thread, with the `SurfaceView`'s surface valid and the Activity resumed and focused. Immediate failures come back in the `Result`; later ones go to `PoseListener.onError`. |
-| `stop()` | Asks the frame loop to end; `PoseListener.onStopped` follows when everything is released. Also ends a pause. Call it from `onPause` and `surfaceDestroyed`. |
+| `stop()` | Asks the frame loop to end; `PoseListener.onStopped` follows when everything is released. Also ends a pause. Call it from `onPause` and `surfaceDestroyed`. Any thread. |
 | `renderer: XrRenderer?` | Volatile; read on the render thread each frame. |
 | `latestUsable(): PoseSample?` | Last `USABLE` sample of the current session, or null. Any thread. |
-| `diagnostics(): Map<String, String>` | RayNeo SDK and runtime versions, runtime/system names, advertised OpenXR `extensions` (comma-separated), state, session epoch, last end reason. For logs only. |
-| `onWindowFocusChanged(hasFocus: Boolean)` | Forward from `Activity.onWindowFocusChanged`; the runtime tracks focus, and a paused session resumes here. |
+| `diagnostics(): Map<String, String>` | RayNeo SDK and runtime versions, runtime/system names, advertised OpenXR `extensions` (comma-separated), state, confidence, jumps, session epoch, last end reason. For logs only. |
+| `confidence(): TrackingConfidence` | `NONE`, `NORMAL` or `DEGRADED` (a position jump in the last 2 s). Any thread. |
+| `onWindowFocusChanged(hasFocus: Boolean)` | Forward from `Activity.onWindowFocusChanged`; the runtime tracks focus, and a paused session resumes here. Any thread. |
 | `setHud(top: String = "", bottom: String = "")` | Head-locked debug text: small top line, larger bottom line. Upper-case Latin letters, digits and `. : / - < >`; anything else is a space. Long lines shrink; beyond about 100 characters they are clipped. Any thread. |
 
 One session at a time per process; consecutive sessions in one process work (observed once, after a
@@ -57,6 +58,13 @@ still has focus, that is `SpatialError.SessionLost`.
 
 `onStopped(reason)`: `STOPPED`, `ERROR`, `BIND_FAILED`, `STOPPED_BEFORE_SESSION`, `SURFACE_INVALID`,
 `LOADER_FAILED`, `RESUME_FAILED`.
+
+**Start attempts and threads.** Every start or resume is a numbered attempt; a bind or native result of an
+older attempt is ignored, and a new attempt is only possible from STOPPED or PAUSED, so two native runs never
+overlap. `start()` must be called on the main thread; `stop()` and `onWindowFocusChanged()` may be called from
+any thread and are applied on the main thread. `stop()` is asynchronous: `start()` before `onStopped` returns
+`AlreadyRunning`. `SpatialHost` handles this: after a normal stop it starts again by itself if its Activity is
+still resumed and focused (for example after a quick pause and resume).
 
 ## XrRenderer and EyeFrame
 
@@ -90,6 +98,7 @@ class EyeFrame(val eye: Int, val view: FloatArray, val projection: FloatArray,
 ```kotlin
 interface PoseListener {
     fun onSample(sample: PoseSample, quality: SampleQuality)
+    fun onConfidenceChanged(confidence: TrackingConfidence) {}
     fun onStateChanged(state: TrackingState) {}
     fun onError(error: SpatialError) {}
     fun onStopped(reason: String) {}
@@ -97,8 +106,8 @@ interface PoseListener {
 ```
 
 `onSample` is called on the render thread for every located frame (about 60 per second), including
-rejected ones: keep it short and use only `USABLE` samples for content. The other callbacks arrive on the
-main thread.
+rejected ones: keep it short and use only `USABLE` samples for content. `onConfidenceChanged` also comes
+on the render thread, when the confidence changes. The other callbacks arrive on the main thread.
 
 ## PoseSample
 
@@ -129,7 +138,19 @@ Raw result of `xrLocateSpace(VIEW, LOCAL, predictedDisplayTime)`; nothing is nor
 | `WARMING_UP` | Clean, but the current clean run is shorter than `windowNs` (300 ms) or `minSamples` (10). |
 | `USABLE` | Clean, after an uninterrupted clean run of at least 300 ms and 10 samples. |
 
-Any rejection restarts the clean run. Use one gate per session. `XrSpatialSession` already runs one; the
+Any rejection restarts the clean run. After a `JUMP` the rejected pose becomes the reference, so a position
+that stays shifted (seen on the device: ~0.3–0.4 m after a fast head turn) becomes `USABLE` again after the
+window: tracking recovers, but world-locked content then appears offset. `ConfidenceTracker` marks such
+periods:
+
+| `TrackingConfidence` | When |
+| --- | --- |
+| `NONE` | No usable pose now (start-up, or the warm-up after a rejection). |
+| `NORMAL` | Usable and no jump within the last 2 s (`ConfidenceTracker.degradedNs`). |
+| `DEGRADED` | A jump within the last 2 s: hide world-locked content, show a hint, or `recenter()`. |
+
+`XrSpatialSession.confidence()` and `PoseListener.onConfidenceChanged` report it; `diagnostics()` counts
+`jumps`. Use one gate per session. `XrSpatialSession` already runs one; the
 class is public so pose-only consumers and tests can apply the same rule.
 
 ## SpatialError
