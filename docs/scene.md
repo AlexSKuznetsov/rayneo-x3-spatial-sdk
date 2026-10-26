@@ -84,8 +84,9 @@ override fun dispatchTouchEvent(e: MotionEvent): Boolean {  // the temple touchp
 | `SpatialPanel.performClickAt(hit): View?` | Optional helper: `performClick()` on the deepest visible, enabled, clickable view under the hit, then redraw. Main thread. Panel views have no window, so touch events dispatched into them would not click. |
 
 Only visible nodes with content are hit; the nearest wins. Nodes are one-sided, so they are not hit from behind.
-The [`sample-pointer`](../sample-pointer) app shows a card with two buttons: tap clicks, swipe forward switches
-dot/ray, swipe back switches the pointer off and on.
+The [`sample-pointer`](../sample-pointer) app shows a card with two buttons: tap clicks, swipe towards the eye switches
+dot/ray, swipe towards the ear switches the pointer off and on, two-finger tap recenters. Checked on the glasses:
+the dot does not double, taps click the aimed button, the pointer switches off and on.
 
 ## Designing for this display
 

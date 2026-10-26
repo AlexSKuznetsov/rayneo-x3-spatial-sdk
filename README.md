@@ -83,7 +83,8 @@ Tested on one X3 Pro (runtime 1.1.7.9, RayNeo SDK 1.1.2):
 
 - **Works:** tracking at 60 Hz; world-locked cubes and cards stay in place while walking and turning;
   stable start (nothing is drawn during the runtime's ~1 s of start-up garbage); pause and resume when
-  another app takes focus; cards are centred, readable and correctly coloured.
+  another app takes focus; cards are centred, readable and correctly coloured; a dot or ray pointer shows
+  what the wearer aims at, and taps on the temple touchpad click the button under it.
 - **Not measured yet:** metric scale, accuracy and drift, latency; other firmware versions.
 - **Known issues:** position jumps were seen (~0.3–0.4 m after a ~90° head turn; once ~1 m in a 30 s run);
   the runtime's timestamps and tracking flags are not usable (see the runtime notes).

@@ -22,8 +22,8 @@ import kotlin.math.abs
  * choice; the SDK only draws the pointer and says what it points at:
  *
  * - tap: click the button under the pointer;
- * - swipe forward (along the temple): switch between dot and ray;
- * - swipe back: switch the pointer off and on;
+ * - swipe forward (along the temple, towards the eye): switch between dot and ray;
+ * - swipe back (towards the ear): switch the pointer off and on;
  * - two-finger tap: place the card in front again.
  */
 class PointerActivity : Activity() {

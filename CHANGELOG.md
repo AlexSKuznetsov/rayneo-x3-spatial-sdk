@@ -6,7 +6,8 @@
   (`PointerStyle.Dot`) or a ray (`PointerStyle.Ray`) from the centre of the view (`PointerSource.Gaze`) or an
   app-supplied pose (`PointerSource.Custom`), switchable with `enabled`; `hit` / `PointerListener` report the
   node, point and pixel it points at. `SpatialPanel.performClickAt(hit)` clicks the view there. New sample
-  `sample-pointer`. `xrspatial-core`: `Ray3`, `RectHit`, `Pose3.forwardRay()`.
+  `sample-pointer`. On the glasses: the dot sits on the card without doubling, taps click the button under it,
+  `enabled` switches it off and on, ray and recenter work. `xrspatial-core`: `Ray3`, `RectHit`, `Pose3.forwardRay()`.
 
 - New sample `sample-input`: logs every input event the Activity receives during an XR session. Run on the
   glasses: the temple touchpad arrives as ordinary touchscreen events; a long press takes focus away
