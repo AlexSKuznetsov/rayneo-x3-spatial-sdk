@@ -81,6 +81,19 @@ class WarmupGateTest {
         assertEquals(1, tracker.jumps)
     }
 
+    @Test fun startupJumpsDoNotDegradeConfidence() {
+        // Seen on the glasses: every session's start-up wild pose is a JUMP; it must not make
+        // the new session DEGRADED.
+        val tracker = ConfidenceTracker()
+        val gate = WarmupGate()
+        val samples = List(5) { pose(it * frameNs, x = it * 1e-4f) } + pose(5 * frameNs, x = 0.5f, yawDeg = 60.0) +
+            List(40) { pose((6 + it) * frameNs, x = 0.5f + it * 1e-4f, yawDeg = 60.0) }
+        val c = samples.map { tracker.update(it, gate.classify(it)) }
+        assertTrue(TrackingConfidence.DEGRADED !in c)
+        assertEquals(TrackingConfidence.NORMAL, c.last())
+        assertEquals(0, tracker.jumps)
+    }
+
     @Test fun confidenceIsNoneWhileWarmingUp() {
         val tracker = ConfidenceTracker()
         val s = pose(0)

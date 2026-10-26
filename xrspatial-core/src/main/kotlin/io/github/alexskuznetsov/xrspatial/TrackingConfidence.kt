@@ -18,16 +18,24 @@ enum class TrackingConfidence {
     DEGRADED,
 }
 
-/** Turns per-sample qualities into a [TrackingConfidence]. One instance per session; feed every sample in order. */
+/**
+ * Turns per-sample qualities into a [TrackingConfidence]. One instance per session; feed every sample in order.
+ *
+ * Only jumps after the session's first [SampleQuality.USABLE] sample count: the runtime's start-up garbage
+ * includes wild poses (seen on the device in every session) that are rejected as jumps but say nothing about a
+ * shifted frame.
+ */
 class ConfidenceTracker(val degradedNs: Long = 2_000_000_000L) {
-    /** [PoseSample.hostReceiptNs] of the latest [SampleQuality.JUMP] in this session, or null. */
+    /** [PoseSample.hostReceiptNs] of the latest counted [SampleQuality.JUMP] in this session, or null. */
     var lastJumpNs: Long? = null
         private set
     var jumps = 0
         private set
+    private var everUsable = false
 
     fun update(sample: PoseSample, quality: SampleQuality): TrackingConfidence {
-        if (quality == SampleQuality.JUMP) {
+        if (quality == SampleQuality.USABLE) everUsable = true
+        if (quality == SampleQuality.JUMP && everUsable) {
             lastJumpNs = sample.hostReceiptNs
             jumps++
         }

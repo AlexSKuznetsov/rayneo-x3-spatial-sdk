@@ -145,7 +145,7 @@ periods:
 
 | `TrackingConfidence` | When |
 | --- | --- |
-| `NONE` | No usable pose now (start-up, or the warm-up after a rejection). |
+| `NONE` | No usable pose now (start-up, or the warm-up after a rejection). Jumps before the session's first usable pose (start-up garbage) do not count. |
 | `NORMAL` | Usable and no jump within the last 2 s (`ConfidenceTracker.degradedNs`). |
 | `DEGRADED` | A jump within the last 2 s: hide world-locked content, show a hint, or `recenter()`. |
 
