@@ -3,7 +3,7 @@
 Build spatial Android apps for **RayNeo X3 Pro** AR glasses in plain Kotlin: head 6DoF tracking and
 world-locked content, **no Unity**.
 
-Unofficial · Apache-2.0 · v0.3, experimental
+Unofficial · Apache-2.0 · v0.3.1, experimental
 
 > Not affiliated with, endorsed by or supported by RayNeo or TCL. This repository contains no RayNeo
 > software; you download the RayNeo SDK yourself ([how](#2-get-the-rayneo-libraries)).
@@ -81,7 +81,7 @@ pointer.enabled = false                                // hide it (and stop hit 
 pointer.style = PointerStyle.Ray()                     // dot <-> ray
 pointer.source = PointerSource.Custom { myPose() }     // a pose from your own tracking instead of the gaze
 pointer.listener = PointerListener { hit -> /* main thread: target changed, or null */ }
-val hit = pointer.hit                                  // node, point, distance, u/v and pixel on the panel
+val hit = pointer.hit                                  // target, point, pixel on the panel; null if tracking is lost
 scene.pointer = null                                   // remove it
 ```
 
@@ -163,7 +163,8 @@ Tested on one X3 Pro (runtime 1.1.7.9, RayNeo SDK 1.1.2):
 ## Roadmap
 
 - **0.3** (done): pointer API (dot / ray), touchpad facts, lifecycle hardening, tracking confidence
-- **0.4**: Jetpack Compose content in panels; cheaper panel updates (reused buffers)
+- **0.3.1** (done): pointer safety (no clicks on stale targets), cheaper panel updates (reused buffers), timings
+- **0.4**: Jetpack Compose content in panels
 - **0.5**: recorded pose traces for testing without the glasses
 - **Later**: spatial anchors or OpenXR spatial containers, if the RayNeo runtime starts to support them
 

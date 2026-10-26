@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.1 — unreleased
+## 0.3.1 — 2026-10-25
 
 **Pointer safety** (from a code review)
 - `SpatialPointer.hit` is null whenever no frame is drawn with a usable pose (start-up, the warm-up after a
@@ -10,14 +10,20 @@
   (CLOCK_MONOTONIC). New parameters at the end, with defaults.
 - `PointerListener` deliveries are coalesced: a busy main thread gets the latest target, not a queue of old ones.
 - `XrRenderer.onFrameSkipped(head)` (default no-op): once per frame not drawn because the pose is not usable.
+- On the glasses: taps between a HOME / relaunch and the first drawn frame clicked nothing, and the card's state
+  was kept; aimed taps clicked the right button with hits 7–22 ms old.
 
 **Cheaper panel updates**
 - The renderer reuses one staging buffer and overwrites textures of unchanged size with `glTexSubImage2D`
   instead of allocating new storage per change.
-- `SpatialPanel.update()` alternates between two bitmaps instead of allocating one per call.
+- `SpatialPanel.update()` alternates between two bitmaps instead of allocating one per call. While frames are
+  drawn no new bitmaps are made (on the glasses: 0 in 289 updates at 10 Hz); while nothing is drawn (start-up,
+  relaunch) an update still makes a new one.
 - Timings for logs: `SpatialScene.diagnostics()` (texture upload time and bytes, panel updates, bitmaps
   created) and `frameInterval` / `renderTime` in `XrSpatialSession.diagnostics()`; `TimingStats` in the core.
 - `sample-pointer`: a line on the card redrawn 10 times a second, timings logged every 5 s, hit age logged per tap.
+  On the glasses: a ~280 KB panel upload took 1.0 ms on average (max 3.9 ms, host CPU); head samples every
+  16.7 ms; the scene's render time for both eyes 1.2 ms on average.
 - Docs: touchpad gesture recipe (`docs/scene.md`).
 
 ## 0.3.0 — 2026-10-25
