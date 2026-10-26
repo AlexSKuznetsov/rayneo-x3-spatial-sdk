@@ -1,10 +1,12 @@
 # API reference (0.1.0)
 
-Package `io.github.alexskuznetsov.xrspatial`. Two modules:
+Package `io.github.alexskuznetsov.xrspatial`. Modules:
 
-- `xrspatial-core` — plain Kotlin/JVM: the pose data model and the warm-up gate. Usable in tests and tools.
+- `xrspatial-core` — plain Kotlin/JVM: the pose data model, the warm-up gate and `Vector3` / `Quaternion` /
+  `Pose3` (`PoseSample.pose`). Usable in tests and tools.
 - `xrspatial` — Android library: the session, the renderer interface and the native OpenXR frame loop.
   Depends on `xrspatial-core` (`api`).
+- `xrspatial-scene` — cards, images and text without OpenGL; documented in [scene.md](scene.md).
 
 Coordinates everywhere: OpenXR LOCAL space of the current session — metres, right-handed, +X right, +Y up,
 −Z forward. Origin and yaw are the head's at session start; +Y is against gravity.
@@ -23,7 +25,7 @@ class XrSpatialSession(activity: Activity, surfaceView: SurfaceView, config: Con
 | `stop()` | Asks the frame loop to end; `PoseListener.onStopped` follows when everything is released. Also ends a pause. Call it from `onPause` and `surfaceDestroyed`. |
 | `renderer: XrRenderer?` | Volatile; read on the render thread each frame. |
 | `latestUsable(): PoseSample?` | Last `USABLE` sample of the current session, or null. Any thread. |
-| `diagnostics(): Map<String, String>` | RayNeo SDK and runtime versions, runtime/system names, state, session epoch, last end reason. For logs only. |
+| `diagnostics(): Map<String, String>` | RayNeo SDK and runtime versions, runtime/system names, advertised OpenXR `extensions` (comma-separated), state, session epoch, last end reason. For logs only. |
 | `onWindowFocusChanged(hasFocus: Boolean)` | Forward from `Activity.onWindowFocusChanged`; the runtime tracks focus, and a paused session resumes here. |
 | `setHud(top: String = "", bottom: String = "")` | Head-locked debug text: small top line, larger bottom line. Upper-case Latin letters, digits and `. : / - < >`; anything else is a space. Long lines shrink; beyond about 100 characters they are clipped. Any thread. |
 

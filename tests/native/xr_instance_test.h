@@ -107,6 +107,7 @@ inline void run(const std::function<void(bool, const char*)>& expect, const std:
             xrspatial::XrInstanceSetup setup(functions(), handles(), "test");
             expect(setup.create() && setup.instance() == kInstance && setup.system() == 7, "instance and HMD system created");
             expect(f.chained && !f.androidEnabled, "Android create info chained although the extension is not advertised; name not enabled");
+            expect(setup.info().extensions == std::vector<std::string>{"XR_KHR_opengl_es_enable"}, "advertised extensions recorded");
             const auto& info = setup.info();
             expect(info.failure.empty() && info.runtimeName == "Fake runtime" && info.runtimeVersion == "1.1.7" && info.systemName == "Fake glasses" &&
                    info.positionTrackingAdvertised && info.viewWidth == 1280 && info.viewHeight == 960 &&

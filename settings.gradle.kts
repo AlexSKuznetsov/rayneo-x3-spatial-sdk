@@ -6,4 +6,4 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
 rootProject.name = "rayneo-x3-spatial-sdk"
-include(":xrspatial-core", ":xrspatial", ":sample")
+include(":xrspatial-core", ":xrspatial", ":xrspatial-scene", ":sample", ":sample-scene")

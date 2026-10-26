@@ -206,6 +206,8 @@ class XrSpatialSession(
         instance?.optString("runtimeName")?.takeIf { it.isNotEmpty() }?.let { facts["runtimeName"] = it }
         instance?.optString("runtimeVersion")?.takeIf { it.isNotEmpty() }?.let { facts["runtimeVersion"] = it }
         instance?.optString("systemName")?.takeIf { it.isNotEmpty() }?.let { facts["systemName"] = it }
+        // Advertised OpenXR extensions, e.g. to notice spatial anchors or containers in a future runtime.
+        instance?.optJSONArray("extensions")?.let { a -> facts["extensions"] = (0 until a.length()).joinToString(",") { a.optString(it) } }
         graphics?.optString("surface")?.takeIf { it.isNotEmpty() }?.let { facts["surface"] = it }
         loop?.optString("endReason")?.let { facts["lastEndReason"] = it }
         return RunResult(

@@ -184,6 +184,12 @@ struct JavaCallbacks {
     }
 };
 
+std::string stringsJson(const std::vector<std::string>& values) {
+    std::string out = "[";
+    for (size_t i = 0; i < values.size(); ++i) out += (i ? "," : "") + xrspatial::jsonQuote(values[i]);
+    return out + "]";
+}
+
 std::string operationsJson(const std::vector<xrspatial::Operation>& ops) {
     std::string o = "[";
     for (size_t i = 0; i < ops.size(); ++i)
@@ -312,7 +318,8 @@ std::string runSession(JNIEnv* env, jclass nativeClass, jobject activity, jobjec
         failure += ":" + std::to_string(int(info.operations.back().result));
     const std::string instanceJson = stage("instance", created ? "COMPLETED" : "ERROR", failure,
         ",\"runtimeName\":" + xrspatial::jsonQuote(info.runtimeName) + ",\"runtimeVersion\":" + xrspatial::jsonQuote(info.runtimeVersion) +
-        ",\"systemName\":" + xrspatial::jsonQuote(info.systemName) + ",\"operations\":" + operationsJson(info.operations));
+        ",\"systemName\":" + xrspatial::jsonQuote(info.systemName) + ",\"extensions\":" + stringsJson(info.extensions) +
+        ",\"operations\":" + operationsJson(info.operations));
     env->DeleteGlobalRef(activityRef);
     env->DeleteGlobalRef(contextRef);
     java.release();

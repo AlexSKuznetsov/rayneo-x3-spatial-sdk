@@ -14,7 +14,9 @@ the RayNeo SDK, then runs a standard OpenXR session with its own frame loop and 
 - the head pose (position + orientation) every frame, as raw OpenXR values with their location flags;
 - a quality verdict per pose (the runtime emits stale and broken poses at the start of every session);
 - per-eye view and projection matrices, so you can draw world-locked content with OpenGL ES 3;
-- an optional head-locked debug text line.
+- an optional head-locked debug text line;
+- a scene API (`xrspatial-scene`): world-locked cards, images and text from ordinary Android Views, with no
+  OpenGL, C++ or Activity lifecycle code in your app.
 
 ![World-locked cubes from the sample app, left eye, recorded on a RayNeo X3 Pro](docs/media/cubes-demo.gif)
 
@@ -23,9 +25,33 @@ sideways and forward; the cubes stay in place, the side face comes into view and
 behind the near one. The bottom line is the raw head position in metres. Recorded from a computer with
 `adb shell screenrecord`; the glasses are see-through, so the room is not in the picture.
 
+Pick the level you need:
+
+| You want | Use |
+| --- | --- |
+| Raw head poses (robotics, computer vision, logging) | `xrspatial-core` + `XrSpatialSession.start(listener)` |
+| Your own OpenGL ES rendering | `xrspatial`: `XrSpatialSession` + an `XrRenderer` |
+| Cards, images and text in the room | `xrspatial-scene`: `SpatialScene` + `SpatialHost` |
+
+A world-locked card from an XML layout, 1.5 m in front of the wearer (`sample-scene`):
+
+```kotlin
+class MaintenanceActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val scene = SpatialScene()
+        val card = layoutInflater.inflate(R.layout.maintenance_card, null)
+        scene.add(SpatialPanel(card, widthMeters = 0.32f, placement = Placement.InFrontOfUser(1.5f)))
+        SpatialHost.attach(this, scene)
+    }
+}
+```
+
+Raw poses:
+
 ```kotlin
 val session = XrSpatialSession(activity, surfaceView)
-session.start(MyRenderer(), object : PoseListener {
+session.start(object : PoseListener {
     override fun onSample(sample: PoseSample, quality: SampleQuality) {
         if (quality == SampleQuality.USABLE) Log.d("pose", "${sample.px} ${sample.py} ${sample.pz}")
     }
@@ -34,8 +60,10 @@ session.start(MyRenderer(), object : PoseListener {
 
 ## Status
 
-Version 0.1.0, experimental. Tested on **one** RayNeo X3 Pro, OpenXR runtime `com.rayneo.xr.runtime`
-1.1.7.9, RayNeo SDK 1.1.2.
+Version 0.2.0 in development, experimental. Tested on **one** RayNeo X3 Pro, OpenXR runtime
+`com.rayneo.xr.runtime` 1.1.7.9, RayNeo SDK 1.1.2. The scene API (`xrspatial-scene`, `sample-scene`) is
+new in 0.2 and so far tested on the host only (layout against the device's measured eye views); it has
+not run on the glasses yet. See [CHANGELOG.md](CHANGELOG.md).
 
 | Verified on that device | Not verified |
 | --- | --- |
@@ -80,6 +108,16 @@ licence ("OpenXR RAYNEO") grants no redistribution.
 adb install -r sample/build/outputs/apk/debug/sample-debug.apk
 ```
 
+The scene sample (a maintenance card from an XML layout):
+
+```bash
+./gradlew :sample-scene:assembleDebug
+```
+
+```bash
+adb install -r sample-scene/build/outputs/apk/debug/sample-scene-debug.apk
+```
+
 Put on the glasses and open **XR Spatial Cubes**. After about a second (the warm-up, "WAITING FOR
 TRACKING") two cubes and a white bar appear in front of you: a 20 cm cube 1.5 m ahead, an orange cube
 further away to the right, and a bar 2 m ahead at your eye height. Walk around the cubes, squat, turn
@@ -88,7 +126,7 @@ away and back: they should stay where they are. The bottom line shows the raw he
 Library and unit tests:
 
 ```bash
-./gradlew :xrspatial-core:test :xrspatial:testDebugUnitTest :sample:testDebugUnitTest :xrspatial:lintDebug
+./gradlew :xrspatial-core:test :xrspatial:testDebugUnitTest :xrspatial-scene:testDebugUnitTest :sample:testDebugUnitTest :xrspatial:lintDebug :xrspatial-scene:lintDebug
 ```
 
 Native host tests of the frame loop and render maths (any C++17 compiler, no device):
@@ -100,12 +138,13 @@ python tools/run_native_tests.py
 ## Use it in your app
 
 There is no Maven artifact yet. Add this repository to your project (for example as a git submodule) and
-include its two library modules in your `settings.gradle.kts`:
+include its library modules in your `settings.gradle.kts` (leave out `xrspatial-scene` if you draw yourself):
 
 ```kotlin
-include(":xrspatial-core", ":xrspatial")
+include(":xrspatial-core", ":xrspatial", ":xrspatial-scene")
 project(":xrspatial-core").projectDir = file("rayneo-x3-spatial-sdk/xrspatial-core")
 project(":xrspatial").projectDir = file("rayneo-x3-spatial-sdk/xrspatial")
+project(":xrspatial-scene").projectDir = file("rayneo-x3-spatial-sdk/xrspatial-scene")
 ```
 
 In `gradle.properties` point `rayneoSdkDir` at your copy of the RayNeo libraries (relative to your root
@@ -118,7 +157,7 @@ android {
     packaging { jniLibs.useLegacyPackaging = true }
 }
 dependencies {
-    implementation(project(":xrspatial"))
+    implementation(project(":xrspatial-scene"))  // or ":xrspatial" for your own renderer
     // Your copy of the RayNeo libraries: the app packages them, this library only compiles against them.
     val rayneo = rootProject.file(providers.gradleProperty("rayneoSdkDir").get())
     implementation(files(rayneo.resolve("RayNeoSDK-client.aar"), rayneo.resolve("RayNeoOpenXRLoader.aar")))
@@ -128,8 +167,9 @@ dependencies {
 The library's manifest adds the `queries` entry for the runtime, the two OpenXR permissions and the
 `com.rayneo.mercury.app` marker the glasses' launcher looks for.
 
-The Activity owns a `SurfaceView` and starts the session once it is resumed, focused and the surface
-exists; stop it in `onPause`. See [CubesActivity.kt](sample/src/main/kotlin/io/github/alexskuznetsov/xrspatial/sample/CubesActivity.kt)
+With `xrspatial-scene`, `SpatialHost.attach(activity, scene)` does the rest; see
+[docs/scene.md](docs/scene.md). Without it, the Activity owns a `SurfaceView` and starts the session once
+it is resumed, focused and the surface exists; stop it in `onPause`. See [CubesActivity.kt](sample/src/main/kotlin/io/github/alexskuznetsov/xrspatial/sample/CubesActivity.kt)
 for the complete pattern, [CubeSceneRenderer.kt](sample/src/main/kotlin/io/github/alexskuznetsov/xrspatial/sample/CubeSceneRenderer.kt)
 for a renderer, and [docs/api.md](docs/api.md) for the API.
 
@@ -172,13 +212,24 @@ has loaded (`dlsym` + `xrGetInstanceProcAddr`); the standard Khronos loader cann
 
 | Path | Contents |
 | --- | --- |
-| `xrspatial-core/` | Pure Kotlin: `PoseSample`, `SpatialTracking`, `PoseListener`, `SpatialError`, `WarmupGate` |
+| `xrspatial-core/` | Pure Kotlin: `PoseSample`, `SpatialTracking`, `PoseListener`, `SpatialError`, `WarmupGate`, `Vector3`, `Quaternion`, `Pose3` |
 | `xrspatial/` | Android library: `XrSpatialSession`, `XrRenderer`, `EyeFrame`; C++ OpenXR frame loop (`src/main/cpp`) |
-| `sample/` | World-locked cubes app |
+| `xrspatial-scene/` | Android library: `SpatialScene`, `SpatialHost`, `SpatialPanel`, `SpatialImage`, `SpatialText`, `Placement` (Kotlin + GLES, no native code) |
+| `sample/` | World-locked cubes app (own `XrRenderer`) |
+| `sample-scene/` | Maintenance card from an XML layout (`xrspatial-scene`) |
 | `tests/native/` | Host tests of the C++ headers against a fake OpenXR runtime |
 | `third_party/openxr/` | Khronos OpenXR 1.1.63 headers |
 | `vendor/` | Where you put the RayNeo libraries (ignored by git) |
 | `docs/` | API reference and device notes |
+
+## Roadmap
+
+| Version | Content |
+| --- | --- |
+| 0.2 | Scene API: panels from Android Views, text, images, session-local placement (this version) |
+| 0.3 | Jetpack Compose content in panels (Compose rendered into a texture through a virtual display) |
+| 0.4 | Input (gaze ray, touchpad, possibly hand tracking, which the runtime advertises), pose-trace recording and replay for tests without the glasses |
+| later | Spatial anchors or OpenXR spatial containers (`XR_EXT_spatial_container`) only if the RayNeo runtime starts to advertise them; `diagnostics()["extensions"]` shows what it offers |
 
 ## Licence
 

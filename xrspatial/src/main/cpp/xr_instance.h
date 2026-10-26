@@ -40,6 +40,7 @@ struct InstanceInfo {
     std::string failure;  // empty on success: the failing operation's name otherwise
     std::vector<Operation> operations;
     std::string runtimeName, runtimeVersion, systemName;
+    std::vector<std::string> extensions;  // as advertised by xrEnumerateInstanceExtensionProperties
     bool positionTrackingAdvertised = false, orientationTrackingAdvertised = false;
     uint32_t viewWidth = 0, viewHeight = 0;
     XrEnvironmentBlendMode blendMode = XR_ENVIRONMENT_BLEND_MODE_ADDITIVE;
@@ -71,6 +72,7 @@ public:
         std::vector<XrExtensionProperties> extensions(count, XrExtensionProperties{XR_TYPE_EXTENSION_PROPERTIES});
         if (count && !require("xrEnumerateInstanceExtensionProperties(data)", xr.enumerateExtensions(nullptr, count, &count, extensions.data()))) return false;
         extensions.resize(std::min<size_t>(count, extensions.size()));
+        for (const auto& e : extensions) info_.extensions.emplace_back(e.extensionName);
         const bool androidAdvertised = std::any_of(extensions.begin(), extensions.end(), [](const XrExtensionProperties& e) {
             return std::strcmp(e.extensionName, XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME) == 0;
         });

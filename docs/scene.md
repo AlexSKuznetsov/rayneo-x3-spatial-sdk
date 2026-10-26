@@ -1,0 +1,78 @@
+# Scene API (`xrspatial-scene`, 0.2)
+
+Cards, images and text in the room, from ordinary Android code: no OpenGL, no C++, no lifecycle handling.
+Package `io.github.alexskuznetsov.xrspatial.scene`. Built on `xrspatial` (`XrSpatialSession`, `XrRenderer`);
+the lower levels stay available.
+
+Status: tested on the host (layout against the X3 Pro's measured eye views, 9 unit tests). Not yet run on
+the glasses.
+
+## Minimal app
+
+```kotlin
+class HelloActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val scene = SpatialScene()
+        scene.add(SpatialText(this, "Hello, room", widthMeters = 0.3f))
+        SpatialHost.attach(this, scene)
+    }
+}
+```
+
+The app module needs the setup from the README (RayNeo libraries, `useLegacyPackaging`, `arm64-v8a`,
+`minSdk 30`). A plain `android.app.Activity` is enough; no AndroidX is required.
+
+## Classes
+
+| Class | What it does |
+| --- | --- |
+| `SpatialHost.attach(activity, scene, config, listener)` | Makes the Activity a full-screen SurfaceView, keeps the display on, starts and stops the session with the Activity's lifecycle, window focus and surface. `host.session` is the underlying `XrSpatialSession`. |
+| `SpatialScene` | The list of nodes; `add`, `remove`, `clear`, `recenter()`. Thread-safe. `scene.renderer` is an `XrRenderer` if you run the session yourself. |
+| `SpatialPanel(view, widthMeters, placement, pixelsPerMeter = 1000f)` | Any Android `View` (inflated layout, `LinearLayout` with `TextView`s and `ImageView`s, ...) drawn into a texture. Call `update()` on the main thread after changing the view. No input yet. |
+| `SpatialText(context, text, widthMeters, placement, textSizeMeters = 0.02f, color)` | A `TextView` with sizes in metres; set `text` on the main thread. |
+| `SpatialImage(bitmap, widthMeters, placement)` | A bitmap; `setBitmap()` to change it. Height follows the aspect ratio. |
+| `SpatialNode.visible`, `.opacity`, `.placement` | Change from any thread; applied on the next frame. |
+
+All nodes are flat rectangles whose front faces the wearer (their +Z side); from behind they are invisible.
+
+## Placement
+
+| Placement | Meaning |
+| --- | --- |
+| `InFrontOfUser(distance = 1.5f, offset)` | World-locked. Placed once, `distance` metres along the display's view axis from the head, facing the wearer without roll; `offset` moves it in its own frame (x right, y up). Then it stays put while the wearer moves. |
+| `InLocal(pose)` | World-locked at a fixed `Pose3` in the session's LOCAL space (origin at the head at session start, -Z ahead, +Y up). |
+| `HeadLocked(distance, offset)` | Follows the head along the display axis. Use for status only. |
+
+**Sessions.** Everything is session-local. A new tracking session (first start, or after a pause on focus
+loss) re-creates LOCAL around the head; `InFrontOfUser` nodes are then placed in front of the wearer again,
+and `InLocal` poses are interpreted in the new LOCAL. Nothing persists across sessions or app restarts: the
+X3 Pro runtime advertises no spatial anchor extension (only `XR_EXT_hand_tracking` on runtime 1.1.7.9).
+`scene.recenter()` places `InFrontOfUser` nodes in front again on demand.
+
+**Display axis.** On the X3 Pro both eye views look about 10.8° below the head's forward direction. The
+layout uses the runtime's eye views, so "in front" is the middle of what the wearer sees. A point straight
+along the head's -Z at 1.5 m would sit above the top edge of the image.
+
+## Designing for this display
+
+- **Small field of view**: about 24° × 18° per eye, 640 × 480 pixels. At 1.5 m that is roughly 0.64 m × 0.48 m.
+  Cards of 0.25–0.35 m wide fit comfortably; a 0.7 m panel at 1.5 m does not fit.
+- **Pixels per metre**: panels map 1000 view pixels to 1 m, close to 1:1 with the display at 1.5 m. Use `px`
+  sizes in layouts: `20px` text is 2 cm, about 20 display pixels high at 1.5 m.
+- **Additive (see-through) display**: black is transparent, white is brightest. Use light text and lines on
+  a transparent background; a white card background becomes a glowing rectangle that hides the room.
+- **Colours**: textures are sRGB, so colours look as in the bitmap.
+
+## Threads and resources
+
+- Nodes and the scene may be changed from any thread; Views must be drawn (`SpatialPanel.update`,
+  `SpatialText.text`) on the main thread.
+- The renderer runs on the session's render thread. GL textures are created per session (a new GL context
+  each time) and uploaded again from the nodes' bitmaps; textures of removed nodes are deleted.
+- Do not change or recycle a bitmap after passing it to a node.
+
+## Not in 0.2
+
+Input (gaze ray, clicks, touchpad), Compose content, anchors or persistence, depth sorting beyond
+back-to-front per node, 3D models. See the roadmap in the README.
