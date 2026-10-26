@@ -65,6 +65,8 @@ class XrSpatialSession(
     @Volatile private var latest: PoseSample? = null
     @Volatile private var confidence = TrackingConfidence.NONE
     @Volatile private var jumps = 0
+    private val frameInterval = TimingStats()  // between head samples of the current session
+    private val renderTime = TimingStats()  // renderer.onDrawEye, both eyes of a frame
     private val machine = SessionStateMachine()
     private var pausedListener: PoseListener? = null
     private var client: FFalconXRClient? = null
@@ -134,7 +136,8 @@ class XrSpatialSession(
      */
     fun confidence(): TrackingConfidence = confidence
 
-    override fun diagnostics(): Map<String, String> = facts + mapOf("state" to machine.state.name, "confidence" to confidence.name, "jumps" to jumps.toString(), "sessionEpoch" to epoch.toString())
+    override fun diagnostics(): Map<String, String> = facts + mapOf("state" to machine.state.name, "confidence" to confidence.name, "jumps" to jumps.toString(), "sessionEpoch" to epoch.toString(),
+        "frameInterval" to frameInterval.toString(), "renderTime" to renderTime.toString())
 
     /**
      * Forward from `Activity.onWindowFocusChanged`: the RayNeo runtime tracks the window focus, and a paused
@@ -187,6 +190,9 @@ class XrSpatialSession(
         val session = epoch
         var lastSample: PoseSample? = null
         var lastQuality: SampleQuality? = null
+        var leftEyeNs = 0L
+        frameInterval.reset()
+        renderTime.reset()
         hudCentre = if (config.waitingHud) WAITING else ""
         pushHud()
         XrSpatialNative.callbacks = object : XrSpatialNative.Callbacks {
@@ -199,6 +205,7 @@ class XrSpatialSession(
                 val quality = gate.classify(sample)
                 val nextConfidence = tracker.update(sample, quality)
                 jumps = tracker.jumps
+                lastSample?.let { frameInterval.record(hostReceiptNs - it.hostReceiptNs) }
                 lastSample = sample
                 if (quality == SampleQuality.USABLE) latest = sample
                 if (config.waitingHud && (quality == SampleQuality.USABLE) != (lastQuality == SampleQuality.USABLE)) {
@@ -214,8 +221,15 @@ class XrSpatialSession(
             }
             override fun onDrawEye(eye: Int, view: FloatArray, projection: FloatArray, width: Int, height: Int) {
                 val head = lastSample ?: return
-                if (lastQuality != SampleQuality.USABLE) return
-                renderer?.onDrawEye(EyeFrame(eye, view, projection, width, height, head))
+                if (lastQuality != SampleQuality.USABLE) {
+                    if (eye == 0) renderer?.onFrameSkipped(head)
+                    return
+                }
+                val target = renderer ?: return
+                val t0 = System.nanoTime()
+                target.onDrawEye(EyeFrame(eye, view, projection, width, height, head))
+                val ns = System.nanoTime() - t0
+                if (eye == 0) leftEyeNs = ns else renderTime.record(leftEyeNs + ns)
             }
             override fun onHands(index: Long, xrTime: Long, info: LongArray, positions: FloatArray) {
                 val target = handListener ?: return

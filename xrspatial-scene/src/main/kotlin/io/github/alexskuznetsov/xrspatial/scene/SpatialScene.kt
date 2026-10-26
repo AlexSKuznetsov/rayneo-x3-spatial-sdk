@@ -8,6 +8,8 @@ import android.os.Handler
 import android.os.Looper
 import io.github.alexskuznetsov.xrspatial.EyeFrame
 import io.github.alexskuznetsov.xrspatial.Pose3
+import io.github.alexskuznetsov.xrspatial.PoseSample
+import io.github.alexskuznetsov.xrspatial.TimingStats
 import io.github.alexskuznetsov.xrspatial.Vector3
 import io.github.alexskuznetsov.xrspatial.XrRenderer
 import io.github.alexskuznetsov.xrspatial.pose
@@ -37,15 +39,39 @@ class SpatialScene {
      */
     @Volatile var pointer: SpatialPointer? = null
 
-    /** Places all [Placement.InFrontOfUser] nodes in front of the wearer again on the next frame. */
-    fun recenter() { recenterRequested = true }
+    /**
+     * Places all [Placement.InFrontOfUser] nodes in front of the wearer again on the next frame. The pointer's
+     * [SpatialPointer.hit] is null until that frame finds the target again.
+     */
+    fun recenter() {
+        recenterRequested = true
+        pointer?.hit = null
+    }
 
     /** Draws this scene; give it to `XrSpatialSession.start(renderer, listener)`. */
     val renderer: XrRenderer = SceneRenderer()
 
+    private val uploadTime = TimingStats()
+    @Volatile private var uploadedBytes = 0L
+
+    /**
+     * For logs: `textureUpload` (host CPU time to copy and upload a changed bitmap, including mipmaps, since the
+     * scene was created), `textureUploadBytes`, and over all panels `panelUpdates` / `panelBitmapsCreated`.
+     */
+    fun diagnostics(): Map<String, String> {
+        val panels = nodes.filterIsInstance<SpatialPanel>()
+        return mapOf(
+            "textureUpload" to uploadTime.toString(),
+            "textureUploadBytes" to uploadedBytes.toString(),
+            "panelUpdates" to panels.sumOf { it.updates }.toString(),
+            "panelBitmapsCreated" to panels.sumOf { it.bitmapsCreated }.toString(),
+        )
+    }
+
     private inner class SceneRenderer : XrRenderer {
         private val layout = SceneLayout()
-        private val textures = HashMap<SpatialQuad, IntArray>()  // node -> [texture id, uploaded version]
+        private val textures = HashMap<SpatialQuad, IntArray>()  // node -> [texture id, uploaded version, width, height]
+        private var staging: ByteBuffer? = null  // reused for every upload, grown when a bitmap is larger
 
         /** One node as drawn this frame: a single content snapshot, so size and texture always match. */
         private inner class Drawn(val node: SpatialQuad, val frame: Versioned<Bitmap>, val pose: Pose3) {
@@ -66,8 +92,7 @@ class SpatialScene {
         private val main = Handler(Looper.getMainLooper())
         private var cast: PointerCast.Result? = null
         private var castPointer: SpatialPointer? = null
-        private var notifiedTarget: SpatialQuad? = null
-        private var notifiedPointer: SpatialPointer? = null
+        private val targets = PointerTargets { main.post(it) }
 
         override fun onGlReady() {
             program = link()
@@ -106,7 +131,7 @@ class SpatialScene {
                 .sortedByDescending { (it.pose.position - eyePosition).length }  // back to front
             if (eye.eye == 0) {
                 dropUnused()
-                castPointer(drawn)
+                castPointer(drawn, head)
             }
 
             GLES30.glUseProgram(program)
@@ -153,12 +178,20 @@ class SpatialScene {
             buffer = 0
             program = 0
             solid = 0
+            dropPointer()  // the session ended: no frames, so no target
+        }
+
+        // No usable pose this frame: nothing is drawn, so nothing may stay targeted.
+        override fun onFrameSkipped(head: PoseSample) = dropPointer()
+
+        private fun dropPointer() {
             cast = null
+            targets.drop(pointer)
         }
 
         // Once per frame (left eye): what the pointer hits, published to SpatialPointer.hit and, when the target
         // node changes, to its listener on the main thread.
-        private fun castPointer(drawn: List<Drawn>) {
+        private fun castPointer(drawn: List<Drawn>, head: PoseSample) {
             val p = pointer?.takeIf { it.enabled }
             cast = p?.let { pointer ->
                 val targets = drawn.map { d -> PointerCast.Target(d, d.pose, d.width, d.height) }
@@ -171,19 +204,10 @@ class SpatialScene {
             val hit = result?.hit
             val published = if (target != null && node != null && hit != null) {
                 val bitmap = target.frame.value
-                PointerHit(node, hit.point, hit.distance, hit.u, hit.v, hit.u * bitmap.width, hit.v * bitmap.height)
+                PointerHit(node, hit.point, hit.distance, hit.u, hit.v, hit.u * bitmap.width, hit.v * bitmap.height,
+                    head.sessionEpoch, head.frameIndex, head.hostReceiptNs)
             } else null
-            p?.hit = published
-            if (node !== notifiedTarget || p !== notifiedPointer) {
-                val previous = notifiedPointer
-                val previousTarget = notifiedTarget
-                notifiedTarget = node
-                notifiedPointer = p
-                // A pointer that was switched off or replaced while on a target hears that it has none now.
-                if (previous != null && previous !== p && previousTarget != null)
-                    previous.listener?.let { l -> main.post { l.onTargetChanged(null) } }
-                p?.listener?.let { l -> main.post { l.onTargetChanged(published) } }
-            }
+            targets.publish(p, node, published)
         }
 
         // The pointer over everything (no depth test): a beam and/or a dot, camera-facing for this eye.
@@ -245,22 +269,36 @@ class SpatialScene {
             val version = frame.version
             val bitmap = frame.value
             val entry = textures.getOrPut(node) {
-                IntArray(2).also { GLES30.glGenTextures(1, it, 0); it[1] = version - 1 }
+                IntArray(4).also { GLES30.glGenTextures(1, it, 0); it[1] = version - 1 }
             }
             if (entry[1] != version) {
-                val pixels = ByteBuffer.allocateDirect(bitmap.byteCount).order(ByteOrder.nativeOrder())
+                val t0 = System.nanoTime()
+                val pixels = staging?.takeIf { it.capacity() >= bitmap.byteCount }
+                    ?: ByteBuffer.allocateDirect(bitmap.byteCount).order(ByteOrder.nativeOrder()).also { staging = it }
+                pixels.clear()
                 bitmap.copyPixelsToBuffer(pixels)
                 pixels.position(0)
                 GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, entry[0])
                 GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 4)
-                GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_SRGB8_ALPHA8, bitmap.width, bitmap.height, 0,
-                    GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, pixels)
+                if (entry[2] == bitmap.width && entry[3] == bitmap.height) {
+                    // Same size: overwrite the existing storage instead of allocating new.
+                    GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, bitmap.width, bitmap.height,
+                        GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, pixels)
+                } else {
+                    GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_SRGB8_ALPHA8, bitmap.width, bitmap.height, 0,
+                        GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, pixels)
+                    GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR_MIPMAP_LINEAR)
+                    GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+                    GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+                    GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+                    entry[2] = bitmap.width
+                    entry[3] = bitmap.height
+                }
                 GLES30.glGenerateMipmap(GLES30.GL_TEXTURE_2D)
-                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR_MIPMAP_LINEAR)
-                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
-                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
-                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
                 entry[1] = version
+                node.content.consumed(version)  // the panel may draw into the bitmap before this one again
+                uploadTime.record(System.nanoTime() - t0)
+                uploadedBytes += bitmap.byteCount
             }
             return entry[0]
         }

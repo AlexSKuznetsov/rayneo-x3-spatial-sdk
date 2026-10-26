@@ -22,6 +22,31 @@ class ContentSlotTest {
         assertEquals(b.version, slot.current!!.version)
     }
 
+    @Test fun theValueBeforeTheCurrentOneIsReusableOnlyAfterANewerVersionWasConsumed() {
+        val slot = ContentSlot<String>()
+        val a = slot.publish("a")
+        assertNull(slot.reusable())  // nothing before "a"
+        slot.consumed(a.version)
+        val b = slot.publish("b")
+        assertNull(slot.reusable())  // the renderer may still be reading "a": it has not consumed anything newer
+        slot.consumed(b.version)
+        assertEquals("a", slot.reusable())
+        slot.publish(slot.reusable()!!)  // "a" again, as version 3
+        assertNull(slot.reusable())  // "b" is previous now, and the renderer has not seen version 3 yet
+        slot.consumed(b.version)  // an old consumption does not count
+        assertNull(slot.reusable())
+    }
+
+    @Test fun theCurrentValueIsNeverReusable() {
+        val slot = ContentSlot<String>()
+        val a = slot.publish("a")
+        val b = slot.publish("b")
+        slot.consumed(b.version)
+        slot.consumed(a.version)  // out of order: ignored
+        assertEquals("a", slot.reusable())
+        assertTrue(slot.reusable() !== slot.current!!.value)
+    }
+
     @Test fun concurrentPublishersNeverProduceAMixedSnapshot() {
         val slot = ContentSlot<Payload>()
         val published = java.util.concurrent.ConcurrentHashMap<Int, Payload>()  // version -> payload

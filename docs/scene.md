@@ -66,7 +66,7 @@ val pointer = SpatialPointer(PointerStyle.Dot())            // or PointerStyle.R
 scene.pointer = pointer                                      // scene.pointer = null removes it
 pointer.enabled = false                                      // off: nothing drawn, hit = null; true: on again
 pointer.style = PointerStyle.Ray()                           // switch at any time
-pointer.listener = PointerListener { hit -> /* main thread, when the target node changes */ }
+pointer.listener = PointerListener { hit -> /* main thread, when the target node changes (latest only) */ }
 
 override fun dispatchTouchEvent(e: MotionEvent): Boolean {  // the temple touchpad: ordinary touch events
     if (e.actionMasked == MotionEvent.ACTION_UP) pointer.hit?.let { card.performClickAt(it) }
@@ -80,13 +80,46 @@ override fun dispatchTouchEvent(e: MotionEvent): Boolean {  // the temple touchp
 | `PointerStyle.Ray(widthMeters = 0.003f, color, maxLength = 3f, endDot = Dot(0.5f))` | A beam from the source to the target (or `maxLength` metres), optionally ending in a dot. |
 | `PointerSource.Gaze(rayOrigin = (0.1, -0.15, 0))` | The default. Points along the display axis, the centre of what the wearer sees (about 11° below the head's forward on the X3 Pro). `rayOrigin` (display frame, metres) only sets where a visible beam starts, since a beam from the eyes would be seen end-on. |
 | `PointerSource.Custom { pose }` | A LOCAL pose from the app every frame (render thread), e.g. from a tracked phone; the pointer runs along its −Z. Return null to hide it for that frame. |
-| `SpatialPointer.hit: PointerHit?` | The latest target: `node`, `point` (LOCAL), `distance`, `u`/`v` (0..1 from top-left) and `pixelX`/`pixelY` in the node's bitmap (a panel's view coordinates). Null when nothing is hit, when off, or before tracking. Any thread. |
+| `SpatialPointer.hit: PointerHit?` | The latest target: `node`, `point` (LOCAL), `distance`, `u`/`v` (0..1 from top-left) and `pixelX`/`pixelY` in the node's bitmap (a panel's view coordinates), plus the head pose it was found with: `sessionEpoch`, `frameIndex`, `hostReceiptNs` (CLOCK_MONOTONIC, comparable with `System.nanoTime()`). Null when nothing is hit, when off, right after `recenter()`, and whenever no frame is drawn with a usable pose (before tracking, during the warm-up after a rejected pose, while paused or stopped), so a tap after a tracking loss clicks nothing. Any thread. |
+| `PointerListener` | Main thread, when the target node changes. Coalesced: a busy main thread gets the latest target, not a queue of old ones. |
 | `SpatialPanel.performClickAt(hit): View?` | Optional helper: `performClick()` on the deepest visible, enabled, clickable view under the hit, then redraw. Main thread. Panel views have no window, so touch events dispatched into them would not click. |
 
 Only visible nodes with content are hit; the nearest wins. Nodes are one-sided, so they are not hit from behind.
 The [`sample-pointer`](../sample-pointer) app shows a card with two buttons: tap clicks, swipe towards the eye switches
 dot/ray, swipe towards the ear switches the pointer off and on, two-finger tap recenters. Checked on the glasses:
 the dot does not double, taps click the aimed button, the pointer switches off and on.
+
+### Touchpad gestures (a recipe, not SDK API)
+
+The SDK does not interpret gestures. On the X3 Pro the temple touchpad arrives in the Activity as ordinary
+touchscreen `MotionEvent`s while the session runs, so a few lines in `dispatchTouchEvent` are enough. Observed on
+the glasses: x runs along the temple (0..1280) and grows towards the eye; a tap lasts ~60–90 ms without movement;
+a swipe crosses most of the range in ~100–130 ms; a second finger arrives as `ACTION_POINTER_DOWN`. There are no
+key events (no BACK), and a long press (about 0.8 s or more) opens a system app, which pauses the session, so
+avoid long-press gestures.
+
+```kotlin
+private var downX = 0f
+private var downTime = 0L
+private var fingers = 0
+
+override fun dispatchTouchEvent(e: MotionEvent): Boolean {
+    when (e.actionMasked) {
+        MotionEvent.ACTION_DOWN -> { downX = e.x; downTime = e.eventTime; fingers = 1 }
+        MotionEvent.ACTION_POINTER_DOWN -> fingers = maxOf(fingers, e.pointerCount)
+        MotionEvent.ACTION_UP -> {
+            val dx = e.x - downX
+            when {
+                fingers >= 2 -> scene.recenter()                          // two-finger tap
+                dx > 300f -> onSwipeTowardsEye()
+                dx < -300f -> onSwipeTowardsEar()
+                abs(dx) < 60f && e.eventTime - downTime < 300 -> pointer.hit?.let { card.performClickAt(it) }
+            }
+        }
+    }
+    return true
+}
+```
 
 ## Designing for this display
 
@@ -105,6 +138,10 @@ the dot does not double, taps click the aimed button, the pointer switches off a
 - The renderer runs on the session's render thread. GL textures are created per session (a new GL context
   each time) and uploaded again from the nodes' bitmaps; textures of removed nodes are deleted.
 - Do not change or recycle a bitmap after passing it to a node.
+- Frequent updates (a timer, telemetry): a `SpatialPanel` alternates between two bitmaps of the same size and
+  draws into the older one once the renderer has uploaded the newer one; the renderer reuses one staging buffer
+  and overwrites a texture of unchanged size in place. `SpatialScene.diagnostics()` reports `textureUpload`
+  (host CPU time per upload, including mipmaps), `textureUploadBytes`, `panelUpdates` and `panelBitmapsCreated`.
 
 ## Not in 0.3
 

@@ -48,6 +48,11 @@ sealed interface PointerSource {
  * What a pointer points at: [node], the [point] in LOCAL, the [distance] along the pointer (metres), the position
  * on the node as [u] / [v] (0..1 from the top-left corner) and as [pixelX] / [pixelY] in the node's bitmap, which
  * for a [SpatialPanel] are its view's coordinates.
+ *
+ * It was found in the frame drawn with the head pose [sessionEpoch] / [frameIndex], received at [hostReceiptNs]
+ * (CLOCK_MONOTONIC, the clock of `System.nanoTime()` on Android). An app that wants to refuse old hits can compare
+ * `System.nanoTime() - hostReceiptNs` with its own limit; the scene already drops hits when frames stop (see
+ * [SpatialPointer.hit]).
  */
 data class PointerHit(
     val node: SpatialQuad,
@@ -57,9 +62,15 @@ data class PointerHit(
     val v: Float,
     val pixelX: Float,
     val pixelY: Float,
+    val sessionEpoch: Int = 0,
+    val frameIndex: Long = 0L,
+    val hostReceiptNs: Long = 0L,
 )
 
-/** Called on the main thread when the pointer's target changes to another node, to none, or back. */
+/**
+ * Called on the main thread when the pointer's target changes to another node, to none, or back. Changes are
+ * coalesced: when the main thread is busy, only the latest one is delivered, not a queue of old targets.
+ */
 fun interface PointerListener {
     fun onTargetChanged(hit: PointerHit?)
 }
@@ -82,7 +93,12 @@ class SpatialPointer(
     @Volatile var source: PointerSource = source
     @Volatile var listener: PointerListener? = null
 
-    /** The latest target, updated every drawn frame; null when there is none, when disabled, or before tracking. */
+    /**
+     * The latest target, updated every drawn frame. Null when there is none, when the pointer is disabled, right
+     * after [SpatialScene.recenter], and whenever no frame is drawn with a usable pose: before tracking, during the
+     * warm-up after a rejected pose, and while the session is paused or stopped. So a tap never clicks what the
+     * pointer was on before tracking was lost.
+     */
     @Volatile var hit: PointerHit? = null
         internal set
 }

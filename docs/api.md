@@ -26,7 +26,7 @@ class XrSpatialSession(activity: Activity, surfaceView: SurfaceView, config: Con
 | `stop()` | Asks the frame loop to end; `PoseListener.onStopped` follows when everything is released. Also ends a pause. Call it from `onPause` and `surfaceDestroyed`. Any thread. |
 | `renderer: XrRenderer?` | Volatile; read on the render thread each frame. |
 | `latestUsable(): PoseSample?` | Last `USABLE` sample of the current session, or null. Any thread. |
-| `diagnostics(): Map<String, String>` | RayNeo SDK and runtime versions, runtime/system names, advertised OpenXR `extensions` (comma-separated), state, confidence, jumps, session epoch, last end reason. For logs only. |
+| `diagnostics(): Map<String, String>` | RayNeo SDK and runtime versions, runtime/system names, advertised OpenXR `extensions` (comma-separated), state, confidence, jumps, session epoch, last end reason; `frameInterval` (between head samples) and `renderTime` (your renderer, both eyes of a frame) of the current session as `n=… mean=…ms max=…ms last=…ms` (host CPU time). For logs only. |
 | `confidence(): TrackingConfidence` | `NONE`, `NORMAL` or `DEGRADED` (a position jump in the last 2 s). Any thread. |
 | `onWindowFocusChanged(hasFocus: Boolean)` | Forward from `Activity.onWindowFocusChanged`; the runtime tracks focus, and a paused session resumes here. Any thread. |
 | `setHud(top: String = "", bottom: String = "")` | Head-locked debug text: small top line, larger bottom line. Upper-case Latin letters, digits and `. : / - < >`; anything else is a space. Long lines shrink; beyond about 100 characters they are clipped. Any thread. |
@@ -72,6 +72,7 @@ still resumed and focused (for example after a quick pause and resume).
 interface XrRenderer {
     fun onGlReady() {}                // once per session, GL context current
     fun onDrawEye(eye: EyeFrame)      // every eye of every USABLE frame
+    fun onFrameSkipped(head: PoseSample) {}  // once per frame that is not drawn (pose not USABLE)
     fun onGlRelease() {}              // once per session, GL context still current
 }
 

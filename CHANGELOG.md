@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.1 — unreleased
+
+**Pointer safety** (from a code review)
+- `SpatialPointer.hit` is null whenever no frame is drawn with a usable pose (start-up, the warm-up after a
+  rejected pose, paused or stopped) and right after `SpatialScene.recenter()`; before, it kept the last target, so
+  a tap after a tracking loss could click it.
+- `PointerHit` carries the head pose it was found with: `sessionEpoch`, `frameIndex`, `hostReceiptNs`
+  (CLOCK_MONOTONIC). New parameters at the end, with defaults.
+- `PointerListener` deliveries are coalesced: a busy main thread gets the latest target, not a queue of old ones.
+- `XrRenderer.onFrameSkipped(head)` (default no-op): once per frame not drawn because the pose is not usable.
+
+**Cheaper panel updates**
+- The renderer reuses one staging buffer and overwrites textures of unchanged size with `glTexSubImage2D`
+  instead of allocating new storage per change.
+- `SpatialPanel.update()` alternates between two bitmaps instead of allocating one per call.
+- Timings for logs: `SpatialScene.diagnostics()` (texture upload time and bytes, panel updates, bitmaps
+  created) and `frameInterval` / `renderTime` in `XrSpatialSession.diagnostics()`; `TimingStats` in the core.
+- `sample-pointer`: a line on the card redrawn 10 times a second, timings logged every 5 s, hit age logged per tap.
+- Docs: touchpad gesture recipe (`docs/scene.md`).
+
 ## 0.3.0 — 2026-10-25
 
 **Pointer**

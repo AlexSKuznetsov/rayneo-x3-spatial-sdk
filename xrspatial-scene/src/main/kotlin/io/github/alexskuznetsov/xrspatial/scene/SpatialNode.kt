@@ -80,10 +80,21 @@ open class SpatialPanel(
             View.MeasureSpec.makeMeasureSpec(MAX_HEIGHT_PX, View.MeasureSpec.AT_MOST))
         val heightPx = view.measuredHeight.coerceIn(1, MAX_HEIGHT_PX)
         view.layout(0, 0, widthPx, heightPx)
-        val bitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
+        // Two bitmaps take turns: the one shown before the current one is drawn into again once the renderer has
+        // uploaded a newer one. Otherwise (first update, a size change, the renderer behind) a new one is made.
+        val reuse = content.reusable()?.takeIf { it.width == widthPx && it.height == heightPx && it.isMutable && !it.isRecycled }
+        val bitmap = reuse?.apply { eraseColor(Color.TRANSPARENT) } ?: Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
         view.draw(Canvas(bitmap))
         show(bitmap)
+        updates++
+        if (reuse == null) bitmapsCreated++
     }
+
+    /** [update] calls on this panel, and how many of them needed a new bitmap. For diagnostics. */
+    @Volatile var updates = 0L
+        private set
+    @Volatile var bitmapsCreated = 0L
+        private set
 
     /**
      * Optional helper for apps that want ordinary click listeners: clicks the deepest visible, enabled, clickable

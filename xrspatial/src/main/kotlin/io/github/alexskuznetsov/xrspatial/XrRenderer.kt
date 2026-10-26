@@ -19,6 +19,12 @@ interface XrRenderer {
      */
     fun onDrawEye(eye: EyeFrame)
 
+    /**
+     * A frame was not drawn because its head pose is not [SampleQuality.USABLE] (start-up, or the warm-up after a
+     * rejected pose); [head] is that pose. Called once per such frame, instead of [onDrawEye].
+     */
+    fun onFrameSkipped(head: PoseSample) {}
+
     /** GL context is still current: delete what [onGlReady] created. Called once per session. */
     fun onGlRelease() {}
 }

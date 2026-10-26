@@ -26,6 +26,16 @@
         android:textColor="#E0E0E0"
         android:textSize="20px" />
 
+    <TextView
+        android:id="@+id/live"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4px"
+        android:fontFamily="monospace"
+        android:text="Running 0.0 s"
+        android:textColor="#80CBC4"
+        android:textSize="18px" />
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

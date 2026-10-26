@@ -3,6 +3,9 @@ package io.github.alexskuznetsov.xrspatial.samplepointer
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
 import android.widget.TextView
@@ -31,13 +34,21 @@ import kotlin.math.abs
  * - swipe forward (along the temple, towards the eye): switch between dot and ray;
  * - swipe back (towards the ear): switch the pointer off and on;
  * - two-finger tap: place the card in front again.
+ *
+ * A live line on the card (running time, a made-up pump speed) is redrawn 10 times a second, like a timer or
+ * telemetry would be; every 5 s the scene's and the session's timings are logged.
  */
 class PointerActivity : Activity() {
     private val scene = SpatialScene()
     private val pointer = SpatialPointer()
     private lateinit var card: SpatialPanel
     private lateinit var info: SpatialText
+    private lateinit var host: SpatialHost
+    private lateinit var live: TextView
     private var target = "none"
+    private val main = Handler(Looper.getMainLooper())
+    private val startedAt = SystemClock.elapsedRealtime()
+    private var ticks = 0
 
     // Touchpad gesture being tracked: start position, time and most pointers seen.
     private var downX = 0f
@@ -51,6 +62,7 @@ class PointerActivity : Activity() {
         val status = view.findViewById<TextView>(R.id.status)
         view.findViewById<TextView>(R.id.inspect).setOnClickListener { status.text = "Inspected ✓" }
         view.findViewById<TextView>(R.id.reset).setOnClickListener { status.text = "Not inspected" }
+        live = view.findViewById(R.id.live)
         card = scene.add(SpatialPanel(view, widthMeters = 0.34f, placement = Placement.InFrontOfUser(1.5f)))
         info = scene.add(SpatialText(this, "", widthMeters = 0.34f, textSizeMeters = 0.013f,
             placement = Placement.InFrontOfUser(1.5f, offset = Vector3(0f, -0.13f, 0f))))
@@ -60,13 +72,38 @@ class PointerActivity : Activity() {
         }
         scene.pointer = pointer
         showInfo()
-        SpatialHost.attach(this, scene, listener = object : PoseListener {
+        host = SpatialHost.attach(this, scene, listener = object : PoseListener {
             override fun onSample(sample: PoseSample, quality: SampleQuality) = Unit
             override fun onStateChanged(state: TrackingState) { Log.i(TAG, "state $state") }
             override fun onConfidenceChanged(confidence: TrackingConfidence) { Log.i(TAG, "confidence $confidence") }
             override fun onError(error: SpatialError) { Log.i(TAG, "error ${error.operation} ${error.resultCode}") }
             override fun onStopped(reason: String) { Log.i(TAG, "stopped $reason") }
         })
+    }
+
+    override fun onResume() {
+        super.onResume()
+        main.post(tick)
+    }
+
+    override fun onPause() {
+        main.removeCallbacks(tick)
+        super.onPause()
+    }
+
+    // 10 Hz: new text on the card, so the panel is redrawn and its texture uploaded again each time.
+    private val tick = object : Runnable {
+        override fun run() {
+            val seconds = (SystemClock.elapsedRealtime() - startedAt) / 1000.0
+            live.text = String.format(java.util.Locale.ROOT, "Running %.1f s   %d rpm", seconds, 1450 + (ticks * 7) % 60)
+            card.update()
+            if (++ticks % 50 == 0) {
+                val d = host.session.diagnostics()
+                Log.i(TAG, "timing frame ${d["frameInterval"]} | render ${d["renderTime"]}")
+                Log.i(TAG, "timing scene ${scene.diagnostics()}")
+            }
+            main.postDelayed(this, 100)
+        }
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -94,8 +131,12 @@ class PointerActivity : Activity() {
             "swipe-forward" -> pointer.style = if (pointer.style is PointerStyle.Dot) PointerStyle.Ray() else PointerStyle.Dot()
             "swipe-back" -> pointer.enabled = !pointer.enabled
             "tap" -> {
-                val clicked = pointer.hit?.let { card.performClickAt(it) }
-                Log.i(TAG, "tap hit=${pointer.hit != null} clicked=${clicked?.id?.let { resources.getResourceEntryName(it) }}")
+                val hit = pointer.hit
+                val clicked = hit?.let { card.performClickAt(it) }
+                // How old the hit was when the tap was handled: the head pose it was found with was received then.
+                val age = hit?.let { (System.nanoTime() - it.hostReceiptNs) / 1_000_000 }
+                Log.i(TAG, "tap hit=${hit != null} ageMs=$age frame=${hit?.frameIndex} epoch=${hit?.sessionEpoch} " +
+                    "clicked=${clicked?.id?.let { resources.getResourceEntryName(it) }}")
             }
             else -> return
         }
